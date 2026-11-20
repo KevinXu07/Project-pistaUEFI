@@ -34,7 +34,7 @@ Fastboot 服务启动失败时，横幅显示原因，固件在 45 秒后冷重�
    python tools/dev/prepare_pista.py
    ```
 
-`prepare_pista.py` 从 `xbl_config` 里的 UEFI 配置设备树生成内存图和配置表，写入 `uefi/platforms/pistaPkg/`；把原厂模块和设备树复制到 `vendor/pista/` 并记录哈希；最后把平台和模块装进 `upstream/Mu-Silicium`。它还会打印内存图与 piano 的差异：40 个区域里只有 `DXE_Heap` 不同（起点和大小不同，终点同为 `0xD8000000`），`UEFI_FD` 同样在 `0xA7000000`，大小 4 MB。
+`prepare_pista.py` 从 `xbl_config` 里的 UEFI 配置设备树生成内存图（另外从 `DXE_Heap` 末尾划出 2 MiB 给内存日志）和配置表，写入 `uefi/platforms/pistaPkg/`；把原厂模块和设备树复制到 `vendor/pista/` 并记录哈希；最后把平台和模块装进 `upstream/Mu-Silicium`。它还会打印内存图与 piano 的差异：40 个区域里只有 `DXE_Heap` 不同（起点和大小不同，终点同为 `0xD8000000`），`UEFI_FD` 同样在 `0xA7000000`，大小 4 MB。
 
 ## 编译和临时启动
 
@@ -81,12 +81,22 @@ fastboot -s SunUEFI-pista get_staged pista-screenshot.bmp
 ```
 
 ```bash
+fastboot -s SunUEFI-pista oem ramlog
+```
+
+```bash
+fastboot -s SunUEFI-pista get_staged pista-ramlog.txt
+```
+
+```bash
 fastboot -s SunUEFI-pista reboot
 ```
 
-`oem screenshot` 导出当前屏幕的 24 位 BMP（1264×2780，约 10 MB）。诊断固件的日志直接打印在屏幕上，所以截图就能看到日志；屏幕只在 USB 有收发时打印新日志，空闲时画面不动是正常的。`oem status` 输出 USB 控制器和存储策略的状态，`reboot` 会先停止服务、释放 USB 的 DMA 和 SMMU 资源，再冷重启。Fastboot 空闲运行几分钟不会被看门狗复位。
+`oem ramlog` 导出本次启动的完整固件日志（最多 256 KiB），从 `SUNUEFI_RAMLOG_BEGIN` 开始，包括 SEC 横幅、内存分配、DXE 驱动加载和 USB 服务的每一步。`oem screenshot` 导出当前屏幕的 24 位 BMP（1264×2780，约 10 MB）。屏幕和内存日志只在有新日志时更新，USB 空闲时画面不动是正常的。`oem status` 输出 USB 控制器和存储策略的状态，`reboot` 会先停止服务、释放 USB 的 DMA 和 SMMU 资源，再冷重启。Fastboot 空闲运行几分钟不会被看门狗复位。
 
-这一版不带存储：`fetch`、`flash`、`erase` 都会失败，存储策略显示 `read-only`。`oem ramlog` 还不能用：piano 把内存日志写在 `0xA3500000`，那是 piano 的 ramoops 区域；在 pista 上这里是显示的 Demura 数据，诊断固件不往里写。`oem sha256` 返回 "SHA256 unavailable"，因为关闭安全启动时 BaseCryptLib 是空实现。
+这一版不带存储：`fetch`、`flash`、`erase` 都会失败，存储策略显示 `read-only`。`oem sha256` 返回 "SHA256 unavailable"，因为关闭安全启动时 BaseCryptLib 是空实现。
+
+内存日志写在 `DXE_Heap` 末尾划出的 2 MiB（`0xD7E00000`，内存图中的 `UEFI_RamLog`，保留且不缓存）。piano 把日志写在 Linux ramoops 预留的 `0xA3500000`，并且从不初始化它；pista 的设备树没有固定地址的 ramoops，而 `0xA3500000` 在 pista 上是显示的 Demura 数据，所以 pista 用自己的区域，并在每次启动时由 SEC 清空。串口库（`RamLogSerialPortLib`）由 `prepare_pista.py` 在工作区里用 Mu 的帧缓冲串口库加上 `PistaRamLog.c` 组装，日志同时写屏幕和这块内存。
 
 服务代码来自共用的 `uefi/core/usb/` 和 `uefi/core/memory/`，由 `prepare_pista.py` 复制进工作区的诊断启动管理库，以 USB 2.0 方式编译（`PIANO_USB_SUPERSPEED=0`、`SUNUEFI_DEVICE_NAME="pista"`）。GT7 Pro 的 USB3 PHY 在板级设备树里是禁用的，`maximum-speed` 为 `high-speed`，所以固件不初始化 QMP PHY，按 Linux `dwc3-qcom` 对纯 USB 2.0 板子的做法让控制器从 UTMI 取 PIPE 时钟，并把 DWC3 设为 High-Speed。M31 eUSB2 PHY 和中继器的供电与 piano 相同（ldod2、ldof1 为 0.88 V，ldob5 为 3.1 V，ldob15 为 1.8 V），通过原厂 RpmhDxe 投票。诊断固件没有完整的板级设备树，服务读取的 SMMU 和 USB 节点由 `prepare_pista.py` 从 `pista.dtb` 中裁出，生成 `PistaDeviceTree.h`。
 

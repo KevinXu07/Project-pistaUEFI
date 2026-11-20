@@ -51,6 +51,11 @@ FASTBOOT_DT_NODES = ('/', '/soc', '/soc/apps-smmu@15000000', '/soc/ufshc@1d84000
                      '/soc/ssusb@a600000/dwc3@a600000', '/soc/qcom,gpi-dma@a00000',
                      '/soc/qcom,qupv3_1_geni_se@ac0000')
 FASTBOOT_DT_PROPERTIES = ('compatible', 'reg', 'iommus', '#address-cells', '#size-cells', 'ranges')
+# "oem ramlog" ring: the last 2 MiB of DXE_Heap, reserved and uncached. The
+# base is repeated in RamLogSerialPortLib/PistaRamLog.c and in the
+# PIANO_USB_CONSOLE_BASE flag of Stage0BootManagerLib.inf.
+RAM_LOG_BASE = 0xD7E00000
+RAM_LOG_SIZE = 0x200000
 # The upstream BootShim ships a 3 MiB FD; the stock range is split to host it.
 FD_SHIM_SIZE = 0x300000
 FD_RESERVED_SIZE = 0x100000
@@ -99,6 +104,14 @@ def memory_entries(nodes):
     split.append({'name': 'UEFI_FD', 'base': fd_base + FD_RESERVED_SIZE, 'size': FD_SHIM_SIZE,
                   'hob': 'AddMem', 'resource_type': 0, 'resource_attribute': 0x703C07,
                   'memory_type': 4, 'arm_attribute': 'WRITE_BACK'})
+    heap = next((entry for entry in split if entry['name'] == 'DXE_Heap'), None)
+    if heap is None or heap['base'] + heap['size'] != RAM_LOG_BASE + RAM_LOG_SIZE:
+        raise SystemExit('DXE_Heap does not end where the RAM log region expects')
+    heap['size'] -= RAM_LOG_SIZE
+    split.insert(split.index(heap) + 1,
+                 {'name': 'UEFI_RamLog', 'base': RAM_LOG_BASE, 'size': RAM_LOG_SIZE,
+                  'hob': 'AddMem', 'resource_type': 5, 'resource_attribute': 0x703C07,
+                  'memory_type': 0, 'arm_attribute': 'UNCACHED_UNBUFFERED_XN'})
     return observed, split
 
 
@@ -348,6 +361,28 @@ def install_fastboot_sources(library):
             shutil.copyfile(ROOT / 'uefi' / 'components' / component / name, library / name)
 
 
+def install_ram_log_serial_port(library):
+    """Build the workspace serial port library: Mu's framebuffer console plus the RAM log."""
+    upstream = ROOT / 'upstream' / 'Mu-Silicium' / 'Silicon' / 'Silicium' / 'SiliciumPkg' / 'Library' / 'FrameBufferSerialPortLib'
+    for name in ('FrameBufferSerialPortLib.c', 'FrameBuffer.h', 'Font.h'):
+        shutil.copyfile(upstream / name, library / name)
+    source = (library / 'FrameBufferSerialPortLib.c').read_text()
+    include, write = '#include "FrameBuffer.h"\n', '  // Get Frame Buffer Memory\n  Status = GetFrameBufferMemory (&FbBase, &FbLength);'
+    if source.count(include) != 1 or source.count(write) != 1:
+        raise SystemExit('Upstream FrameBufferSerialPortLib.c changed; update the RAM log hook')
+    source = source.replace(include, include + 'VOID RamLogWrite (IN CONST UINT8 *Buffer, IN UINTN Length);\n')
+    source = source.replace(write, '  RamLogWrite (Buffer, NumberOfBytes);\n' + write)
+    (library / 'FrameBufferSerialPortLib.c').write_text(source)
+    inf = (upstream / 'FrameBufferSerialPortLib.inf').read_text()
+    if inf.count('  FrameBufferSerialPortLib.c\n') != 1:
+        raise SystemExit('Upstream FrameBufferSerialPortLib.inf changed; update the RAM log hook')
+    inf = inf.replace('BASE_NAME                      = FrameBufferSerialPortLib',
+                      'BASE_NAME                      = PistaRamLogSerialPortLib')
+    inf = inf.replace('33220897-2430-1CD5-EA89-CB01B138CF39', 'B6A1D0E4-5C2F-4E7A-9D31-7F0C2A8E4B15')
+    inf = inf.replace('  FrameBufferSerialPortLib.c\n', '  FrameBufferSerialPortLib.c\n  PistaRamLog.c\n')
+    (library / 'RamLogSerialPortLib.inf').write_text(inf)
+
+
 def install_workspace(platform):
     """Copy pistaPkg and the Stage0 binaries into the fetched Mu-Silicium workspace."""
     workspace = ROOT / 'upstream' / 'Mu-Silicium'
@@ -359,6 +394,7 @@ def install_workspace(platform):
         shutil.rmtree(destination)
     shutil.copytree(platform, destination)
     install_fastboot_sources(destination / 'Library' / 'Stage0BootManagerLib')
+    install_ram_log_serial_port(destination / 'Library' / 'RamLogSerialPortLib')
     index = extracted_index()
     stage0 = json.loads((platform / 'native-modules.json').read_text())
     binaries = workspace / 'Binaries' / 'pista' / 'Stage0'

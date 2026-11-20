@@ -91,5 +91,8 @@
   gSiliciumPkgTokenSpaceGuid.PcdSmbiosProcessorModel|"Snapdragon 8 Elite"
 [LibraryClasses]
   DeviceBootManagerLib|pistaPkg/Library/Stage0BootManagerLib/Stage0BootManagerLib.inf
+  # Framebuffer console plus the RAM log read by "fastboot oem ramlog"; the INF
+  # is assembled in the workspace by tools/dev/prepare_pista.py.
+  SerialPortLib|pistaPkg/Library/RamLogSerialPortLib/RamLogSerialPortLib.inf
 [Components]
   pistaPkg/Drivers/CapsuleArchNullDxe/CapsuleArchNullDxe.inf

@@ -242,7 +242,7 @@
   {
     "name": "DXE_Heap",
     "base": 3191209984,
-    "size": 432668672,
+    "size": 430571520,
     "hob": "AddMem",
     "resource_type": 0,
     "resource_attribute": 7355399,
