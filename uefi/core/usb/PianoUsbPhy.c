@@ -3,7 +3,10 @@
 // mu_wide_platforms 3e1d052064beb6e59cda3cfba87d50e6cc088174 and factory XBL DT.
 // No native USB driver is started: the shared DWC3 service retains DMA ownership.
 #include "PianoUsbPhy.h"
+#include "PianoUsbBoard.h"
+#if PIANO_USB_SUPERSPEED
 #include "PianoUsbPhyConfig.h"
+#endif
 #include <Library/IoLib.h>
 #include <Library/BaseLib.h>
 #include <Library/DebugLib.h>
@@ -121,6 +124,7 @@ STATIC EFI_STATUS Reset(EFI_CLOCK_PROTOCOL *Clock){
   }
   S=gBS->Stall(10);return S==EFI_SUCCESS?S:EFI_ERROR(S)?S:EFI_DEVICE_ERROR;
 }
+#if PIANO_USB_SUPERSPEED
 STATIC EFI_STATUS QmpStart(UINT8 Orientation){
   // Bit 0 selects the lane, bit 1 enables software port selection.
   UINT32 Selection=2U|(Orientation==2);
@@ -151,6 +155,33 @@ STATIC EFI_STATUS QmpStop(VOID){
      (Read(SS,8)&1)!=0)return EFI_DEVICE_ERROR;
   return EFI_SUCCESS;
 }
+#else
+// USB0 QSCRATCH_GENERAL_CFG. Without USB3 lanes the controller must take its
+// PIPE clock from UTMI, as Linux dwc3-qcom does for USB 2.0-only boards.
+#define QSCRATCH_GENERAL_CFG 0xA6F8808U
+#define PIPE_UTMI_CLK_SEL BIT0
+#define PIPE3_PHYSTATUS_SW BIT3
+#define PIPE_UTMI_CLK_DIS BIT8
+STATIC UINT32 mOldGeneralCfg;
+STATIC EFI_STATUS UtmiPipeClockStart(VOID){
+  mOldGeneralCfg=MmioRead32(QSCRATCH_GENERAL_CFG);
+  UINT32 Want=mOldGeneralCfg|PIPE_UTMI_CLK_SEL|PIPE3_PHYSTATUS_SW;
+  MmioWrite32(QSCRATCH_GENERAL_CFG,mOldGeneralCfg|PIPE_UTMI_CLK_DIS);MemoryFence();gBS->Stall(100);
+  MmioWrite32(QSCRATCH_GENERAL_CFG,Want|PIPE_UTMI_CLK_DIS);MemoryFence();gBS->Stall(100);
+  MmioWrite32(QSCRATCH_GENERAL_CFG,Want&~PIPE_UTMI_CLK_DIS);MemoryFence();
+  UINT32 Now=MmioRead32(QSCRATCH_GENERAL_CFG);
+  DEBUG((DEBUG_WARN,"SUNUEFI_USB_PHY_READY usb2_only=1 hs_common=%08x hs_ctrl=%08x general_cfg=%08x->%08x\n",
+    Read(HS,0x54),Read(HS,0x64),mOldGeneralCfg,Now));
+  mOrientation=1;
+  return Now==(Want&~PIPE_UTMI_CLK_DIS)?EFI_SUCCESS:EFI_DEVICE_ERROR;
+}
+STATIC EFI_STATUS UtmiPipeClockStop(VOID){
+  mOrientation=0;
+  MmioWrite32(QSCRATCH_GENERAL_CFG,mOldGeneralCfg|PIPE_UTMI_CLK_DIS);MemoryFence();gBS->Stall(100);
+  MmioWrite32(QSCRATCH_GENERAL_CFG,mOldGeneralCfg);MemoryFence();
+  return MmioRead32(QSCRATCH_GENERAL_CFG)==mOldGeneralCfg?EFI_SUCCESS:EFI_DEVICE_ERROR;
+}
+#endif
 EFI_STATUS PianoUsbPhyStart(EFI_CLOCK_PROTOCOL *Clock){
   if(mPhyOwned)return EFI_ALREADY_STARTED;
   if(!Clock || Clock->Version!=0x1000b || !Clock->GetClockID || !Clock->ResetClock)return EFI_UNSUPPORTED;
@@ -166,8 +197,12 @@ EFI_STATUS PianoUsbPhyStart(EFI_CLOCK_PROTOCOL *Clock){
   Write(HS,0x64,0xF);Write(HS,0x64,0xF);Write(HS,0x3C,1);
   Write(HS,0x54,0x6B);Write(HS,0x54,0x6B);Write(HS,0x50,0);
   Write(HS,0x64,7);Write(HS,0x94,0);gBS->Stall(20);
+#if PIANO_USB_SUPERSPEED
   // GPIO61 supplies cable polarity before the Type-C poller starts.
   return QmpStart((UINT8)(1+(MmioRead32(0xF100000U+61U*0x1000U+4)&1)));
+#else
+  return UtmiPipeClockStart();
+#endif
 }
 UINT8 PianoUsbPhyOrientation(VOID){
   return mOrientation;
@@ -175,6 +210,10 @@ UINT8 PianoUsbPhyOrientation(VOID){
 EFI_STATUS PianoUsbPhySetOrientation(UINT8 Orientation){
   if(Orientation!=1 && Orientation!=2)return EFI_INVALID_PARAMETER;
   if(!mPhyOwned || !mOrientation || !ControllerHalted())return EFI_NOT_READY;
+#if !PIANO_USB_SUPERSPEED
+  // USB 2.0 has no lane to select.
+  return EFI_SUCCESS;
+#else
   UINT8 Previous=mOrientation;
   if(Orientation==Previous)return EFI_SUCCESS;
   EFI_STATUS S=QmpStop();
@@ -182,14 +221,23 @@ EFI_STATUS PianoUsbPhySetOrientation(UINT8 Orientation){
   S=QmpStart(Orientation);
   if(S!=EFI_SUCCESS && QmpStop()==EFI_SUCCESS)(VOID)QmpStart(Previous);
   return S;
+#endif
 }
 EFI_STATUS PianoUsbPhyStop(VOID){
   if(!mPhyOwned)return EFI_SUCCESS;
   if(!ControllerHalted())return EFI_NOT_READY;
+#if PIANO_USB_SUPERSPEED
   EFI_STATUS S=QmpStop();
+#else
+  EFI_STATUS S=UtmiPipeClockStop();
+#endif
   Write(HS,0x50,2);Write(HS,0x54,Read(HS,0x54)|BIT1|BIT2);
+#if PIANO_USB_SUPERSPEED
   DEBUG((DEBUG_WARN,"SUNUEFI_USB_PHY_STOP_READBACK start=%08x pcs_reset=%08x com_reset=%08x power=%08x hs_por=%08x hs_common=%08x\n",
     Read(SS,0x1E44),Read(SS,0x1E00),Read(SS,4),Read(SS,8),Read(HS,0x50),Read(HS,0x54)));
+#else
+  DEBUG((DEBUG_WARN,"SUNUEFI_USB_PHY_STOP_READBACK usb2_only=1 hs_por=%08x hs_common=%08x\n",Read(HS,0x50),Read(HS,0x54)));
+#endif
   if(S!=EFI_SUCCESS || !(Read(HS,0x50)&BIT1) || (Read(HS,0x54)&6)!=6)return EFI_DEVICE_ERROR;
   S=PowerStop();if(S!=EFI_SUCCESS)return S;
   mPhyOwned=FALSE;return EFI_SUCCESS;

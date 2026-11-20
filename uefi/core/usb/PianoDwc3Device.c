@@ -30,12 +30,16 @@ typedef EFI_STATUS (*PIANO_USB_STORAGE_CHECK)(VOID *Context,CONST CHAR8 *Phase,B
 #include <Library/BaseMemoryLib.h>
 #include <Library/MemoryAllocationLib.h>
 #include <Library/DebugLib.h>
+#include "PianoUsbBoard.h"
 #define DW 0xA600000U
 // Native UsbfnDwc3Dxe RVAs e988/e9c0 use these exact USB0 QSCRATCH registers.
 #define USB_SESSION_HS 0xF8810U
 #define USB_SESSION_SS 0xF8830U
 #define USB_SESSION_HS_VALID (BIT20|BIT28)
 #define USB_SESSION_SS_PRESENT BIT24
+// USB 2.0-only boards neither request SuperSpeed nor signal a USB3 session.
+#define USB_SESSION_SS_SET (PIANO_USB_SUPERSPEED?USB_SESSION_SS_PRESENT:0U)
+#define USB_DCFG_SPEED (PIANO_USB_SUPERSPEED?4U:0U)
 typedef struct {UINT32 Low,High,Size,Control;} DWC_TRB;
 STATIC PIANO_DMA_BUFFER mRing,mTrbs[4],mSetup,mTx;
 #if PIANO_USB_FASTBOOT
@@ -747,7 +751,7 @@ EFI_STATUS PianoDwc3Ep0Experiment(PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *De
   mDeviceEvents=mSetupEvents=mDiagReplies=0;
   DEBUG((DEBUG_WARN,"SUNUEFI_USB_SESSION_SAVED hs=%08x ss=%08x dsts=%08x\n",OldSessionHs,OldSessionSs,Dr(0xC70C)));
   ZeroMem(&mControl,sizeof(mControl));ZeroMem(mPending,sizeof(mPending));ZeroMem(mPayload,sizeof(mPayload));
-  ZeroMem(mEnding,sizeof(mEnding));mControl.SuperSpeed=TRUE;mControl.Speed=4;
+  ZeroMem(mEnding,sizeof(mEnding));mControl.SuperSpeed=PIANO_USB_SUPERSPEED;mControl.Speed=(UINT8)USB_DCFG_SPEED;
 #if PIANO_USB_FASTBOOT
   mBulkLive=mBulkPrepared=mConfigWaiting=mStatusWaiting=FALSE;
   ClearFastboot();PianoFastbootInit(&mFastboot,NULL,FastbootSend,NULL);
@@ -777,7 +781,7 @@ EFI_STATUS PianoDwc3Ep0Experiment(PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *De
   Status=PianoDwc3CheckStorageForExperiment("coexist-dwc-mapped",TRUE);if(Status!=EFI_SUCCESS)goto Exit;
 #endif
   Dw(0xC110,(OldGctl&~(3U<<12))|(2U<<12)|BIT0); // Device role, retain PHY configuration.
-  Dw(0xC700,(OldDcfg&~(7U|(0x7FU<<3)|(31U<<17)))|4U|(16U<<17)); // Retained SS path, address zero.
+  Dw(0xC700,(OldDcfg&~(7U|(0x7FU<<3)|(31U<<17)))|USB_DCFG_SPEED|(16U<<17)); // Retained SS path, address zero.
   Dw(0xC400,(UINT32)mRing.DeviceAddress);Dw(0xC404,(UINT32)(mRing.DeviceAddress>>32));
   Dw(0xC408,4096);Count=Dr(0xC40C)&0xFFFF;if(Count)Dw(0xC40C,Count);
   Status=PianoDmaBegin(&mRing,"USB_EVENT_RING");if(EFI_ERROR(Status))goto Exit;
@@ -790,11 +794,11 @@ EFI_STATUS PianoDwc3Ep0Experiment(PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *De
   // Qualcomm glue must present VBUS/session to the core before RUN_STOP.
   // Retaining the PHY alone does not transfer a Type-C attach notification.
   Dw(USB_SESSION_HS,OldSessionHs|USB_SESSION_HS_VALID);
-  Dw(USB_SESSION_SS,OldSessionSs|USB_SESSION_SS_PRESENT);SessionSet=TRUE;
+  Dw(USB_SESSION_SS,OldSessionSs|USB_SESSION_SS_SET);SessionSet=TRUE;
   UINT32 SessionHs=Dr(USB_SESSION_HS),SessionSs=Dr(USB_SESSION_SS);
   DEBUG((DEBUG_WARN,"SUNUEFI_USB_SESSION_SET hs_target=%08x ss_target=%08x hs_read=%08x ss_read=%08x dsts=%08x\n",
-    OldSessionHs|USB_SESSION_HS_VALID,OldSessionSs|USB_SESSION_SS_PRESENT,SessionHs,SessionSs,Dr(0xC70C)));
-  if(SessionHs!=(OldSessionHs|USB_SESSION_HS_VALID) || SessionSs!=(OldSessionSs|USB_SESSION_SS_PRESENT)) {
+    OldSessionHs|USB_SESSION_HS_VALID,OldSessionSs|USB_SESSION_SS_SET,SessionHs,SessionSs,Dr(0xC70C)));
+  if(SessionHs!=(OldSessionHs|USB_SESSION_HS_VALID) || SessionSs!=(OldSessionSs|USB_SESSION_SS_SET)) {
     Status=EFI_DEVICE_ERROR;goto Exit;
   }
 #if PIANO_USB_FASTBOOT
@@ -1279,15 +1283,15 @@ EFI_STATUS PianoDwc3ServiceStart(PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *Dev
   S=PianoDwc3CheckStorageForExperiment("service-dwc-mapped",TRUE);if(S!=EFI_SUCCESS)return ServiceError(S);
   mService.RegistersProgrammed=TRUE;
   Dw(0xC110,(mService.OldGctl&~(3U<<12))|(2U<<12)|BIT0);
-  Dw(0xC700,(mService.OldDcfg&~(7U|(0x7FU<<3)|(31U<<17)))|4U|(16U<<17));
+  Dw(0xC700,(mService.OldDcfg&~(7U|(0x7FU<<3)|(31U<<17)))|USB_DCFG_SPEED|(16U<<17));
   Dw(0xC400,(UINT32)mRing.DeviceAddress);Dw(0xC404,(UINT32)(mRing.DeviceAddress>>32));Dw(0xC408,4096);
   UINT32 Count=Dr(0xC40C)&0xffff;if(Count)Dw(0xC40C,Count);
   S=PianoDmaBegin(&mRing,"USB_SERVICE_EVENT_RING");if(S!=EFI_SUCCESS)return ServiceError(S);
   S=Command(0,9,0,0,0);if(S==EFI_SUCCESS)S=ConfigureEp(0,FALSE);if(S==EFI_SUCCESS)S=ConfigureEp(1,FALSE);
   if(S==EFI_SUCCESS)S=Command(2,2,1,0,0);if(S==EFI_SUCCESS)S=Command(3,2,1,0,0);if(S!=EFI_SUCCESS)return ServiceError(S);
   Dw(0xC720,3);Dw(0xC708,BIT0|BIT1|BIT2|BIT3|BIT9);
-  Dw(USB_SESSION_HS,mService.OldSessionHs|USB_SESSION_HS_VALID);Dw(USB_SESSION_SS,mService.OldSessionSs|USB_SESSION_SS_PRESENT);mService.SessionSet=TRUE;
-  if(Dr(USB_SESSION_HS)!=(mService.OldSessionHs|USB_SESSION_HS_VALID) || Dr(USB_SESSION_SS)!=(mService.OldSessionSs|USB_SESSION_SS_PRESENT))return ServiceError(EFI_DEVICE_ERROR);
+  Dw(USB_SESSION_HS,mService.OldSessionHs|USB_SESSION_HS_VALID);Dw(USB_SESSION_SS,mService.OldSessionSs|USB_SESSION_SS_SET);mService.SessionSet=TRUE;
+  if(Dr(USB_SESSION_HS)!=(mService.OldSessionHs|USB_SESSION_HS_VALID) || Dr(USB_SESSION_SS)!=(mService.OldSessionSs|USB_SESSION_SS_SET))return ServiceError(EFI_DEVICE_ERROR);
   S=PianoDwc3CheckStorageForExperiment("service-before-run",TRUE);if(S!=EFI_SUCCESS)return ServiceError(S);
   Dw(0xC704,(Dr(0xC704)&~(BIT9|BIT10|BIT11|BIT12))|BIT31);gBS->Stall(1000);
   S=ArmSetup();if(S!=EFI_SUCCESS)return ServiceError(S);

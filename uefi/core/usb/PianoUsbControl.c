@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 // EP0 Chapter 9 and the standard fastboot FF/42/03 bulk interface.
 #include "PianoUsbControl.h"
+#include "PianoUsbBoard.h"
 #include <Library/BaseMemoryLib.h>
 #ifndef PIANO_USB_FASTBOOT
 #define PIANO_USB_FASTBOOT 0
@@ -39,7 +40,7 @@ EFI_STATUS PianoUsbControlSetup(PIANO_USB_CONTROL *S,CONST UINT8 U[8],UINT8 *Dat
     else if(Type==15 && Id==0 && Index==0 && S->SuperSpeed){UINT8 Bos[]={5,15,22,0,2,7,16,2,0,0,0,0,10,16,3,0,8,0,3,10,0,2};CopyMem(Data,Bos,sizeof(Bos));Size=sizeof(Bos);}
     else if(Type==3 && Id==0){UINT8 L[]={4,3,9,4};CopyMem(Data,L,sizeof(L));Size=sizeof(L);}
     else if(Type==3 && Id<=3 && Index==0x0409) {
-      CONST CHAR8 *Text=Id==1?"SunUEFI":Id==2?(PIANO_USB_FASTBOOT?"piano fastboot debug":"piano EP0 debug"):"SunUEFI-piano";
+      CONST CHAR8 *Text=Id==1?"SunUEFI":Id==2?(PIANO_USB_FASTBOOT?SUNUEFI_DEVICE_NAME " fastboot debug":SUNUEFI_DEVICE_NAME " EP0 debug"):"SunUEFI-" SUNUEFI_DEVICE_NAME;
       Size=2;while(*Text && Size+2<=Capacity){Data[Size++]=(UINT8)*Text++;Data[Size++]=0;}
       Data[0]=(UINT8)Size;Data[1]=3;
     } else return EFI_UNSUPPORTED;

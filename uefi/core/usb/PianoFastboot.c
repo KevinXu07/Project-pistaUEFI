@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 // Fastboot 0.4 command layer with explicit partition-scoped storage operations.
 #include "PianoFastboot.h"
+#include "PianoUsbBoard.h"
 #include <Library/BaseLib.h>
 #include <Library/BaseMemoryLib.h>
 #include <Library/BaseCryptLib.h>
@@ -233,8 +234,8 @@ STATIC EFI_STATUS GetVar(PIANO_FASTBOOT *S, CONST CHAR8 *Name) {
     CHAR8 Result[23]="OKAY0x";Hex64(Info.Bytes,Result+6);return Reply(S,Result);
   }
   if(Equal(Name,"version"))return Reply(S,"OKAY0.4");
-  if(Equal(Name,"product"))return Reply(S,"OKAYpiano-sunuefi");
-  if(Equal(Name,"serialno"))return Reply(S,"OKAYSunUEFI-piano");
+  if(Equal(Name,"product"))return Reply(S,"OKAY" SUNUEFI_DEVICE_NAME "-sunuefi");
+  if(Equal(Name,"serialno"))return Reply(S,"OKAYSunUEFI-" SUNUEFI_DEVICE_NAME);
   if(Equal(Name,"version-bootloader"))return Reply(S,"OKAYSunUEFI-debug-v1");
   if(Equal(Name,"is-userspace"))return Reply(S,"OKAYno");
   if(Equal(Name,"storage-policy"))return Reply(S,PianoFastbootStorageWritable(S)?"OKAYsunuefi-partition-writes":"OKAYread-only");
