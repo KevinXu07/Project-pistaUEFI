@@ -27,6 +27,7 @@ VOID PianoUfsSetProbeAction (EFI_STATUS (*Action)(CONST VOID *Fdt));
 EFI_STATUS PianoUfsReadOnlyDmaExperiment (CONST VOID *Fdt);
 CONST CHAR8 *PianoUfsStartupStage (VOID);
 EFI_STATUS PianoStartFaultRecovery (VOID);
+VOID PistaRamLogSetScreenCopy (BOOLEAN Enabled);
 
 STATIC EFI_EVENT mReturnToAndroidEvent;
 
@@ -161,6 +162,7 @@ STATIC CONST PIANO_FB_STORAGE *StartStorage (VOID)
   if (EFI_ERROR (Status)) {
     DEBUG ((DEBUG_WARN, "PISTA_FAULT_RECOVERY %r\n", Status));
   }
+  Print (L"Starting internal storage (read-only)...\r\n");
   PianoUfsSetProbeAction (StartReadOnlyUfs);
   PianoProbeUfs (mPistaDeviceTree);
   PianoUfsSetProbeAction (NULL);
@@ -236,6 +238,7 @@ STATIC VOID RunFastboot (VOID)
   ZeroMem (&Config, sizeof (Config));
   Config.NowUs   = FastbootNowUs;
   Config.Storage = StartStorage ();
+  Print (L"Starting USB Fastboot...\r\n");
   Status = PianoUsbControllerServiceStart (mPistaDeviceTree, &Config);
   if (EFI_ERROR (Status)) {
     Print (L"USB Fastboot not started: %r\r\n", Status);
@@ -295,6 +298,10 @@ EFI_DEVICE_PATH_PROTOCOL **EFIAPI DeviceBootManagerAfterConsole (VOID)
   }
   PrintNativeDriverSummary ();
   DEBUG ((DEBUG_WARN, "PISTA_STAGE0_CONSOLE_READY EL%u\n", (UINT32)(CurrentEl >> 2)));
+  // From here the screen shows only the banner and the steps printed above;
+  // the detailed UFS, USB and SMMU traces go to "fastboot oem ramlog".
+  Print (L"Detailed log: \"fastboot oem ramlog\".\r\n");
+  PistaRamLogSetScreenCopy (FALSE);
   RunFastboot ();
   // Reached only when Fastboot could not start or the host sent "continue".
   // This cannot recover a hang that happens before the console callback.

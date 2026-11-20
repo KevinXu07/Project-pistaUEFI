@@ -136,7 +136,11 @@ EFI_STATUS PianoDwc3CheckStorageForExperiment(CONST CHAR8 *Phase,BOOLEAN FullCap
 #endif
 // Vendor IN 5B exposes only fixed status registers and a bounded console copy.
 // Snapshot storage is CPU-only; every reply uses the existing mapped mTx.
-#define USB_DIAG_LOG_BYTES 262144U // bounded CPU snapshot; UFS fetch/DMA unchanged
+// Bounded CPU snapshot of the newest console bytes; UFS fetch/DMA unchanged.
+#ifndef PIANO_USB_DIAG_LOG_BYTES
+#define PIANO_USB_DIAG_LOG_BYTES 262144U
+#endif
+#define USB_DIAG_LOG_BYTES PIANO_USB_DIAG_LOG_BYTES
 #define USB_DIAG_PAGE_BYTES 512U
 #define USB_DIAG_PAGE_HEADER 24U
 #ifndef PIANO_USB_CONSOLE_BASE

@@ -382,8 +382,9 @@ def install_ram_log_serial_port(library):
     include, write = '#include "FrameBuffer.h"\n', '  // Get Frame Buffer Memory\n  Status = GetFrameBufferMemory (&FbBase, &FbLength);'
     if source.count(include) != 1 or source.count(write) != 1:
         raise SystemExit('Upstream FrameBufferSerialPortLib.c changed; update the RAM log hook')
-    source = source.replace(include, include + 'VOID RamLogWrite (IN CONST UINT8 *Buffer, IN UINTN Length);\n')
-    source = source.replace(write, '  RamLogWrite (Buffer, NumberOfBytes);\n' + write)
+    # RamLogWrite returns FALSE once the module has turned its screen copy off.
+    source = source.replace(include, include + 'BOOLEAN RamLogWrite (IN CONST UINT8 *Buffer, IN UINTN Length);\n')
+    source = source.replace(write, '  if (!RamLogWrite (Buffer, NumberOfBytes)) {\n    return NumberOfBytes;\n  }\n\n' + write)
     (library / 'FrameBufferSerialPortLib.c').write_text(source)
     inf = (upstream / 'FrameBufferSerialPortLib.inf').read_text()
     if inf.count('  FrameBufferSerialPortLib.c\n') != 1:

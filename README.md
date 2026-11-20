@@ -38,7 +38,7 @@
    fastboot boot artifacts/pista/pista-stage0-UNTESTED.img
    ```
 
-屏幕会一直滚动启动日志，约 70 到 90 秒后电脑上出现 `SunUEFI-pista` 这个 Fastboot 设备。这时可以截图并回到 Android：
+屏幕会先滚动启动日志，然后显示设备信息和每一步的状态，约 8 秒后出现 `USB Fastboot ready`，电脑上能看到 `SunUEFI-pista` 这个 Fastboot 设备。这时可以截图并回到 Android：
 
 ```bash
 fastboot -s SunUEFI-pista oem screenshot

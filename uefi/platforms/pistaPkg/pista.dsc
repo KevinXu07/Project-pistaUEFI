@@ -89,6 +89,9 @@
   gEfiMdeModulePkgTokenSpaceGuid.PcdEmuVariableNvModeEnable|TRUE
   gSiliciumPkgTokenSpaceGuid.PcdSmbiosProcessorPartNumber|"SM8750-AB"
   gSiliciumPkgTokenSpaceGuid.PcdSmbiosProcessorModel|"Snapdragon 8 Elite"
+  # The default 10 ms pause per on-screen log line only slows the boot; the
+  # full log is in "fastboot oem ramlog".
+  gSiliciumPkgTokenSpaceGuid.PcdFrameBufferDelay|0
 [LibraryClasses]
   DeviceBootManagerLib|pistaPkg/Library/Stage0BootManagerLib/Stage0BootManagerLib.inf
   # Framebuffer console plus the RAM log read by "fastboot oem ramlog"; the INF

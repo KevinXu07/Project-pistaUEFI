@@ -6,7 +6,7 @@
 
 ## 现状
 
-用 `fastboot boot` 临时启动时，固件会依次完成 BootShim、SEC、DXE 和 BDS 阶段，并接着使用 ABL 已经点亮的屏幕（1264×2780）。piano 产品核心依赖的 16 个原厂基础模块全部能运行，横幅显示 `Stock drivers running: 16/16`。随后固件以只读方式接管内部 UFS，再启动 USB Fastboot 服务，电脑上可以看到 `SunUEFI-pista`。从 `fastboot boot` 到出现这个设备约需 70 到 90 秒，期间屏幕一直滚动 SMMU、DMA 和 USB 的调试日志，横幅会被滚出屏幕。
+用 `fastboot boot` 临时启动时，固件会依次完成 BootShim、SEC、DXE 和 BDS 阶段，并接着使用 ABL 已经点亮的屏幕（1264×2780）。piano 产品核心依赖的 16 个原厂基础模块全部能运行，横幅显示 `Stock drivers running: 16/16`。随后固件以只读方式接管内部 UFS，再启动 USB Fastboot 服务，电脑上可以看到 `SunUEFI-pista`。从 `fastboot boot` 到出现这个设备约 8 秒。横幅出现前屏幕滚动启动日志；之后屏幕只显示横幅和每一步的状态（接管存储、启动 USB Fastboot），详细日志只写进内存日志。
 
 Fastboot 服务启动失败时，横幅显示原因，固件在 45 秒后冷重启回 Android。电脑发送 `fastboot continue` 时，固件停止服务，提示 "No Operating System Found!"，10 秒后关机；连着 USB 时手机随后会自动开机回到 Android。
 
@@ -96,13 +96,13 @@ fastboot -s SunUEFI-pista fetch boot_a boot_a.img
 fastboot -s SunUEFI-pista reboot
 ```
 
-`fetch` 按 GPT 分区名读取内部存储，每次请求最多 64 KiB（`getvar max-fetch-size`），实测约 1.7 MB/s，96 MB 的 `boot_a` 需要约 1 分钟。读出的 `vbmeta_a`、`xbl_config_a`、`dtbo_a` 和 `boot_a` 与 Android 下 root 读取同一分区的 SHA-256 一致。`oem ramlog` 导出本次启动的完整固件日志（最多 256 KiB），从 `SUNUEFI_RAMLOG_BEGIN` 开始，包括 SEC 横幅、内存分配、DXE 驱动加载和 USB 服务的每一步。`oem screenshot` 导出当前屏幕的 24 位 BMP（1264×2780，约 10 MB）。屏幕和内存日志只在有新日志时更新，USB 空闲时画面不动是正常的。`oem status` 输出 USB 控制器和存储策略的状态，`reboot` 会先停止服务，再停止 UFS，释放两者的 DMA、SMMU 和时钟资源，然后冷重启，约 35 秒后回到 Android。任何一方停不干净时固件不复位，屏幕提示长按电源键。Fastboot 空闲运行几分钟不会被看门狗复位。`oem ramlog` 只导出日志的最后 256 KiB，UFS 启动阶段的日志较多，导出时通常已经不在里面。
+`fetch` 按 GPT 分区名读取内部存储，每次请求最多 64 KiB（`getvar max-fetch-size`），实测约 2.8 MB/s，96 MB 的 `boot_a` 需要约 36 秒。读出的 `vbmeta_a`、`xbl_config_a`、`dtbo_a` 和 `boot_a` 与 Android 下 root 读取同一分区的 SHA-256 一致。`oem ramlog` 导出本次启动的完整固件日志（整个 2 MiB 环形缓冲区），从 `SUNUEFI_RAMLOG_BEGIN` 开始，包括 SEC 横幅、内存分配、DXE 驱动加载以及 UFS、USB、SMMU 的每一步。每行开头的 `[秒.毫秒]` 是开机以来的时间，从手机上电算起，包括 ABL 的时间。`oem screenshot` 导出当前屏幕的 24 位 BMP（1264×2780，约 10 MB）。屏幕和内存日志只在有新日志时更新，USB 空闲时画面不动是正常的。`oem status` 输出 USB 控制器和存储策略的状态，`reboot` 会先停止服务，再停止 UFS，释放两者的 DMA、SMMU 和时钟资源，然后冷重启，约 16 秒后回到 Android。任何一方停不干净时固件不复位，屏幕提示长按电源键。Fastboot 空闲运行几分钟不会被看门狗复位。
 
 内部存储只读：`flash` 和 `erase` 会失败，存储策略显示 `read-only`。`oem sha256` 返回 "SHA256 unavailable"，因为关闭安全启动时 BaseCryptLib 是空实现。
 
 UFS 使用 SunUEFI 自己的只读驱动（`uefi/core/storage/`），不用原厂 UFSDxe，因为原厂驱动需要 TrustZone。驱动不初始化 PHY 和供电，只接管 ABL 留下的链路：检查链路状态、必要时退出 Hibern8，然后换上自己经 SMMU（流 ID 0x60）映射的传输队列，读取设备描述符、各 LUN 容量和 GPT，把每个 LUN 发布成只读 Block I/O，由 PartitionDxe 生成分区。写入和同步命令在提交给控制器之前就被拒绝。pista 的 UFS 控制器、PHY、7 路供电电压和 SMMU 流 ID 与 piano 的原厂设备树完全相同，所需的 10 个时钟和电源域在 pista 原厂 ClockDxe 里都有。原厂内存图没有映射 UFS 控制器寄存器，`prepare_pista.py` 补上 `UFS_HCI`（`0x1D84000`，`0x3000`）。UFS 接管失败时屏幕写明失败的步骤，Fastboot 照常启动，只是 `fetch` 不可用。
 
-内存日志写在 `DXE_Heap` 末尾划出的 2 MiB（`0xD7E00000`，内存图中的 `UEFI_RamLog`，保留且不缓存）。piano 把日志写在 Linux ramoops 预留的 `0xA3500000`，并且从不初始化它；pista 的设备树没有固定地址的 ramoops，而 `0xA3500000` 在 pista 上是显示的 Demura 数据，所以 pista 用自己的区域，并在每次启动时由 SEC 清空。串口库（`RamLogSerialPortLib`）由 `prepare_pista.py` 在工作区里用 Mu 的帧缓冲串口库加上 `PistaRamLog.c` 组装，日志同时写屏幕和这块内存。
+内存日志写在 `DXE_Heap` 末尾划出的 2 MiB（`0xD7E00000`，内存图中的 `UEFI_RamLog`，保留且不缓存）。piano 把日志写在 Linux ramoops 预留的 `0xA3500000`，并且从不初始化它；pista 的设备树没有固定地址的 ramoops，而 `0xA3500000` 在 pista 上是显示的 Demura 数据，所以 pista 用自己的区域，并在每次启动时由 SEC 清空。串口库（`RamLogSerialPortLib`）由 `prepare_pista.py` 在工作区里用 Mu 的帧缓冲串口库加上 `PistaRamLog.c` 组装，日志同时写屏幕和这块内存。诊断启动管理库显示横幅后，关掉自己这个模块的屏幕输出：UFS、USB 和 SMMU 的调试行有约 4000 行，每画一行约 10 毫秒，全部上屏会让 Fastboot 晚一分多钟出现，还会把横幅滚出屏幕。Silicium 默认每画一行再等 10 毫秒（`PcdFrameBufferDelay`），pista 设为 0。
 
 服务代码来自共用的 `uefi/core/usb/`、`uefi/core/storage/` 和 `uefi/core/memory/`，由 `prepare_pista.py` 复制进工作区的诊断启动管理库，以 USB 2.0 方式编译（`PIANO_USB_SUPERSPEED=0`、`SUNUEFI_DEVICE_NAME="pista"`）。GT7 Pro 的 USB3 PHY 在板级设备树里是禁用的，`maximum-speed` 为 `high-speed`，所以固件不初始化 QMP PHY，按 Linux `dwc3-qcom` 对纯 USB 2.0 板子的做法让控制器从 UTMI 取 PIPE 时钟，并把 DWC3 设为 High-Speed。M31 eUSB2 PHY 和中继器的供电与 piano 相同（ldod2、ldof1 为 0.88 V，ldob5 为 3.1 V，ldob15 为 1.8 V），通过原厂 RpmhDxe 投票。诊断固件没有完整的板级设备树，服务读取的 SMMU 和 USB 节点由 `prepare_pista.py` 从 `pista.dtb` 中裁出，生成 `PistaDeviceTree.h`。
 
