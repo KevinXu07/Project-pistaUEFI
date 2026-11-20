@@ -16,7 +16,17 @@
 #include "NativeModules.h"
 #include "PistaDeviceTree.h"
 #include "PianoUsbService.h"
+#include "PianoUsbStorageExperiment.h"
+#include "PianoFastbootBlockRead.h"
+#include "PianoUfsShutdown.h"
+#include "PianoOwnedSmmu.h"
 #include "../Protocol/PianoProductRuntime.h"
+
+VOID PianoProbeUfs (CONST VOID *Fdt);
+VOID PianoUfsSetProbeAction (EFI_STATUS (*Action)(CONST VOID *Fdt));
+EFI_STATUS PianoUfsReadOnlyDmaExperiment (CONST VOID *Fdt);
+CONST CHAR8 *PianoUfsStartupStage (VOID);
+EFI_STATUS PianoStartFaultRecovery (VOID);
 
 STATIC EFI_EVENT mReturnToAndroidEvent;
 
@@ -126,9 +136,91 @@ VOID PianoProbeUsbPower (CONST VOID *Fdt)
   (VOID)Fdt;
 }
 
-// Runs the resident USB Fastboot service without storage. Returns when the
-// service cannot start or the host sends "continue"; "reboot" stops the
-// service, releases its DMA and SMMU resources, then cold resets.
+STATIC BOOLEAN    mUfsStarted;
+STATIC EFI_STATUS mUfsStatus = EFI_NOT_STARTED;
+
+// Runs after PianoProbeUfs has enabled the UFS clocks and power domain.
+STATIC EFI_STATUS StartReadOnlyUfs (CONST VOID *Fdt)
+{
+  mUfsStatus  = PianoUfsReadOnlyDmaExperiment (Fdt);
+  mUfsStarted = mUfsStatus == EFI_SUCCESS;
+  return mUfsStatus;
+}
+
+// Takes over the UFS link that ABL left running and publishes each logical
+// unit as a read-only Block I/O device; PartitionDxe adds the GPT partitions.
+// Returns NULL when storage is unavailable; Fastboot then runs without it.
+STATIC CONST PIANO_FB_STORAGE *StartStorage (VOID)
+{
+  CONST PIANO_FB_STORAGE *Storage;
+  EFI_STATUS             Status;
+
+  // A CPU fault during UFS DMA prints PC/ESR/FAR and stops instead of
+  // resetting with DMA still running.
+  Status = PianoStartFaultRecovery ();
+  if (EFI_ERROR (Status)) {
+    DEBUG ((DEBUG_WARN, "PISTA_FAULT_RECOVERY %r\n", Status));
+  }
+  PianoUfsSetProbeAction (StartReadOnlyUfs);
+  PianoProbeUfs (mPistaDeviceTree);
+  PianoUfsSetProbeAction (NULL);
+  if (!mUfsStarted) {
+    Print (L"Internal storage unavailable (step %a, %r). \"fastboot fetch\" will not work.\r\n",
+      mUfsStatus == EFI_NOT_STARTED ? "UFS CLOCK" : PianoUfsStartupStage (), mUfsStatus);
+    return NULL;
+  }
+  Status  = PianoFastbootBlockReadInit ();
+  Storage = Status == EFI_SUCCESS ? PianoFastbootBlockReadStorage () : NULL;
+  if ((Storage == NULL) || (Storage->Ready (Storage->Context) != EFI_SUCCESS)) {
+    Print (L"Internal storage unavailable (partition list, %r). \"fastboot fetch\" will not work.\r\n", Status);
+    PianoFastbootBlockReadStop ();
+    return NULL;
+  }
+  Print (L"Internal storage: read-only\r\n");
+  return Storage;
+}
+
+// Stops UFS DMA, frees its SMMU context and releases its clocks. When the USB
+// service ran, its retirement proof lets the UFS teardown accept the SMMU
+// changes USB left behind. Returns FALSE when UFS DMA may still be running.
+STATIC BOOLEAN StopStorage (BOOLEAN UsbRan)
+{
+  PIANO_SMMU_RETIRED_USB_PROOF Proof;
+  CONST PIANO_UFS_RESET_REPORT *Ufs;
+  EFI_STATUS                   Status = EFI_SUCCESS;
+  EFI_TPL                      OldTpl;
+
+  if (!mUfsStarted) {
+    return TRUE;
+  }
+  PianoFastbootBlockReadStop ();
+  if (UsbRan) {
+    ZeroMem (&Proof, sizeof (Proof));
+    Status = PianoUsbControllerMakeRetiredUsbProof (mPistaDeviceTree, &Proof);
+    if (Status == EFI_SUCCESS) {
+      Status = PianoUfsAcceptRetiredUsb (&Proof);
+    }
+  }
+  if (Status == EFI_SUCCESS) {
+    OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
+    Status = PianoUfsBlockIoPrepareForReset ();
+    if (Status == EFI_SUCCESS) {
+      Status = PianoUfsBlockIoShutdownForReset ();
+    }
+    Ufs = PianoUfsResetShutdownReport ();
+    if ((Status == EFI_SUCCESS) && (Ufs != NULL) && Ufs->Clean && !Ufs->Failed) {
+      gBS->RestoreTPL (OldTpl);
+      mUfsStarted = FALSE;
+      return TRUE;
+    }
+  }
+  DEBUG ((DEBUG_WARN, "PISTA_UFS_STOP status=%r retained=1\n", Status));
+  return FALSE;
+}
+
+// Runs the resident USB Fastboot service. Returns when the service cannot
+// start or the host sends "continue"; "reboot" stops the service and UFS,
+// releases their DMA and SMMU resources, then cold resets.
 STATIC VOID RunFastboot (VOID)
 {
   PIANO_DWC3_SERVICE_CONFIG       Config;
@@ -142,10 +234,15 @@ STATIC VOID RunFastboot (VOID)
     return;
   }
   ZeroMem (&Config, sizeof (Config));
-  Config.NowUs = FastbootNowUs;
+  Config.NowUs   = FastbootNowUs;
+  Config.Storage = StartStorage ();
   Status = PianoUsbControllerServiceStart (mPistaDeviceTree, &Config);
   if (EFI_ERROR (Status)) {
     Print (L"USB Fastboot not started: %r\r\n", Status);
+    if (!StopStorage (FALSE)) {
+      Print (L"UFS could not be stopped safely. Hold the power key to restart.\r\n");
+      CpuDeadLoop ();
+    }
     return;
   }
   Print (L"USB Fastboot ready: run \"fastboot devices\" on the computer (SunUEFI-pista).\r\n");
@@ -166,13 +263,17 @@ STATIC VOID RunFastboot (VOID)
   ZeroMem (&Report, sizeof (Report));
   Status = PianoUsbControllerServiceStop (EFI_SUCCESS, &Report);
   Print (L"USB Fastboot closed: %r, resources released %u\r\n", Status, (UINT32)Report.Clean);
-  if ((State.Action == PianoUsbServiceActionReboot) && !EFI_ERROR (Status) && Report.Clean) {
-    gRT->ResetSystem (EfiResetCold, EFI_SUCCESS, 0, NULL);
-  }
   if (!Report.Clean) {
     // DMA may still target its buffers; never hand over or reset.
     Print (L"USB resources could not be released. Hold the power key to restart.\r\n");
     CpuDeadLoop ();
+  }
+  if (!StopStorage (TRUE)) {
+    Print (L"UFS could not be stopped safely. Hold the power key to restart.\r\n");
+    CpuDeadLoop ();
+  }
+  if ((State.Action == PianoUsbServiceActionReboot) && !EFI_ERROR (Status)) {
+    gRT->ResetSystem (EfiResetCold, EFI_SUCCESS, 0, NULL);
   }
 }
 
@@ -186,7 +287,6 @@ EFI_DEVICE_PATH_PROTOCOL **EFIAPI DeviceBootManagerAfterConsole (VOID)
   Status = gBS->LocateProtocol (&gEfiGraphicsOutputProtocolGuid, NULL, (VOID **)&Gop);
   Print (L"\r\nSunUEFI: Realme GT7 Pro / rmx5010 / SM8750-AB\r\n");
   Print (L"Stage 0 diagnostic: DXE and console reached, EL%u\r\n", (UINT32)(CurrentEl >> 2));
-  Print (L"Internal storage and USB mass-storage drivers are excluded.\r\n");
   Print (L"Linux and Windows PE boot are not implemented in this image.\r\n");
   if (!EFI_ERROR (Status) && Gop != NULL && Gop->Mode != NULL && Gop->Mode->Info != NULL) {
     Print (L"GOP %ux%u, stride %u, framebuffer 0x%lx\r\n",

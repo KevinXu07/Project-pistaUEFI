@@ -17,10 +17,17 @@
   PianoUsbPhy.c
   PianoFastboot.c
   PianoFastbootScreen.c
+  PianoFastbootBlockRead.c
   PianoSmmu.c
   PianoDma.c
   PianoOwnedSmmu.c
   PianoIoPageTable.c
+  PianoFaultRecovery.c
+  PianoUfsProbe.c
+  PianoUfsReadOnlyDma.c
+  PianoUfsDmaLayout.c
+  PianoGpt.c
+  PianoBlockIo.c
 [Packages]
   MdePkg/MdePkg.dec
   MdeModulePkg/MdeModulePkg.dec
@@ -42,15 +49,23 @@
   CacheMaintenanceLib
   DxeServicesTableLib
   FdtLib
+  PrintLib
+  SerialPortLib
+  ArmSmcLib
   # The null implementation without secure boot: "oem sha256" reports unavailable.
   BaseCryptLib
 [Protocols]
   gEfiGraphicsOutputProtocolGuid
   gEfiLoadedImageProtocolGuid
   gEfiFirmwareVolume2ProtocolGuid
+  gEfiCpuArchProtocolGuid
+  gEfiBlockIoProtocolGuid
+  gEfiDevicePathProtocolGuid
+  gEfiPartitionInfoProtocolGuid
 [Guids]
   gEfiEventExitBootServicesGuid
 [BuildOptions]
-  # USB Fastboot over USB 2.0 without storage: no UFS reads, RAM boot or USB host.
+  # USB Fastboot over USB 2.0 with read-only UFS: "fetch" reads GPT partitions;
+  # nothing writes to UFS. No RAM boot or USB host.
   # "oem ramlog" reads the UEFI_RamLog ring written by RamLogSerialPortLib.
-  GCC:*_CLANGPDB_AARCH64_CC_FLAGS = -DPIANO_USB_SERVICE=1 -DPIANO_USB_EP0=1 -DPIANO_USB_FASTBOOT=1 -DPIANO_USB_SCREENSHOT=1 -DPIANO_USB_SUPERSPEED=0 -DSUNUEFI_DEVICE_NAME=\"pista\" -DPIANO_USB_CONSOLE_BASE=0xD7E00000U
+  GCC:*_CLANGPDB_AARCH64_CC_FLAGS = -DPIANO_USB_SERVICE=1 -DPIANO_USB_EP0=1 -DPIANO_USB_FASTBOOT=1 -DPIANO_USB_SCREENSHOT=1 -DPIANO_USB_UFS_FETCH=1 -DPIANO_UFS_BLOCKIO=1 -DPIANO_USB_SUPERSPEED=0 -DSUNUEFI_DEVICE_NAME=\"pista\" -DPIANO_USB_CONSOLE_BASE=0xD7E00000U

@@ -42,7 +42,9 @@ CONFIG_SKIPS = ('MaxCount', 'StrMaxCount')
 # the diagnostic boot manager library of the installed workspace copy.
 FASTBOOT_SOURCES = ('PianoUsbController.c', 'PianoDwc3Device.c', 'PianoUsbControl.c', 'PianoUsbPhy.c',
                     'PianoFastboot.c', 'PianoFastbootScreen.c', 'PianoSmmu.c', 'PianoDma.c',
-                    'PianoOwnedSmmu.c', 'PianoIoPageTable.c')
+                    'PianoOwnedSmmu.c', 'PianoIoPageTable.c', 'PianoFaultRecovery.c',
+                    'PianoUfsProbe.c', 'PianoUfsReadOnlyDma.c', 'PianoUfsDmaLayout.c', 'PianoGpt.c',
+                    'PianoBlockIo.c', 'PianoFastbootBlockRead.c')
 FASTBOOT_COMPONENT_HEADERS = {'usb-host': ('PianoUsbHost.h', 'PianoUsbTypec.h'),
                               'ext4': ('PianoStorageIo.h', 'PianoStorageIo.inc', 'PianoExt4.h')}
 # The service reads these nodes to validate the SMMU stream layout and the
@@ -56,6 +58,10 @@ FASTBOOT_DT_PROPERTIES = ('compatible', 'reg', 'iommus', '#address-cells', '#siz
 # PIANO_USB_CONSOLE_BASE flag of Stage0BootManagerLib.inf.
 RAM_LOG_BASE = 0xD7E00000
 RAM_LOG_SIZE = 0x200000
+# UFS host controller registers. The stock map leaves them to the stock UFS
+# driver, which the diagnostic firmware replaces with SunUEFI's read-only one.
+UFS_HCI = {'name': 'UFS_HCI', 'base': 0x1D84000, 'size': 0x3000, 'hob': 'AddDev', 'resource_type': 1,
+           'resource_attribute': 0x400, 'memory_type': 11, 'arm_attribute': 'NS_DEVICE'}
 # The upstream BootShim ships a 3 MiB FD; the stock range is split to host it.
 FD_SHIM_SIZE = 0x300000
 FD_RESERVED_SIZE = 0x100000
@@ -113,6 +119,11 @@ def memory_entries(nodes):
                  {'name': 'UEFI_RamLog', 'base': RAM_LOG_BASE, 'size': RAM_LOG_SIZE,
                   'hob': 'AddMem', 'resource_type': 5, 'resource_attribute': 0x703C07,
                   'memory_type': 0, 'arm_attribute': 'UNCACHED_UNBUFFERED_XN'})
+    ufs_end = UFS_HCI['base'] + UFS_HCI['size']
+    if any(entry['base'] < ufs_end and UFS_HCI['base'] < entry['base'] + entry['size'] for entry in split):
+        raise SystemExit('The stock memory map already covers the UFS controller registers')
+    crypto = next(i for i, entry in enumerate(split) if entry['name'] == 'CRYPTO0_CRYPTO')
+    split.insert(crypto, dict(UFS_HCI))
     return observed, split
 
 
