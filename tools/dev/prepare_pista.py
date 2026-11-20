@@ -104,10 +104,11 @@ def memory_entries(nodes):
     split.append({'name': 'UEFI_FD', 'base': fd_base + FD_RESERVED_SIZE, 'size': FD_SHIM_SIZE,
                   'hob': 'AddMem', 'resource_type': 0, 'resource_attribute': 0x703C07,
                   'memory_type': 4, 'arm_attribute': 'WRITE_BACK'})
-    heap = next((entry for entry in split if entry['name'] == 'DXE_Heap'), None)
-    if heap is None or heap['base'] + heap['size'] != RAM_LOG_BASE + RAM_LOG_SIZE:
+    index = next((i for i, entry in enumerate(split) if entry['name'] == 'DXE_Heap'), None)
+    if index is None or split[index]['base'] + split[index]['size'] != RAM_LOG_BASE + RAM_LOG_SIZE:
         raise SystemExit('DXE_Heap does not end where the RAM log region expects')
-    heap['size'] -= RAM_LOG_SIZE
+    # Copy: the stock entry is also recorded unchanged in native-memory-map.json.
+    heap = split[index] = dict(split[index], size=split[index]['size'] - RAM_LOG_SIZE)
     split.insert(split.index(heap) + 1,
                  {'name': 'UEFI_RamLog', 'base': RAM_LOG_BASE, 'size': RAM_LOG_SIZE,
                   'hob': 'AddMem', 'resource_type': 5, 'resource_attribute': 0x703C07,
