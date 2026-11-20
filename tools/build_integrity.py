@@ -7,10 +7,14 @@ from pathlib import Path
 import uuid
 from firmware_workspace import active_root, validate_sources
 
-NAMES={'stage0':'piano','probe':'pianoProbe','linux':'pianoLinux','gui':'pianoGui','product':'pianoProduct'}
+NAMES={'stage0':'piano','probe':'pianoProbe','linux':'pianoLinux','gui':'pianoGui','product':'pianoProduct','pista':'pista'}
 
 def output_names(profile):
-    return ('PianoUEFI-product.fd','BootShim.bin') if profile=='product' else ('piano-stage0.fd','BootShim.bin')
+    if profile=='product':
+        return ('PianoUEFI-product.fd','BootShim.bin')
+    if profile=='pista':
+        return ('pista-stage0.fd','BootShim.bin')
+    return ('piano-stage0.fd','BootShim.bin')
 
 
 def sha(path):
@@ -21,15 +25,18 @@ def inputs(root,profile):
     original_root=root
     if profile=='product':root=active_root(root)
     ws=root/'upstream/Mu-Silicium'
-    platform=ws/'Platforms/Xiaomi'/f'{NAMES[profile]}Pkg'
+    device=NAMES[profile]
+    oem='Realme' if profile=='pista' else 'Xiaomi'
+    platform=ws/'Platforms'/oem/f'{device}Pkg'
     if not platform.is_dir():
         raise ValueError('Prepared platform is missing')
     files=set(p for p in platform.rglob('*') if p.is_file() and '__pycache__' not in p.parts)
-    binaries=ws/'Binaries/piano'
+    binaries=ws/f'Binaries/{device if profile=="pista" else "piano"}'
     if binaries.exists():
         files.update(p for p in binaries.rglob('*') if p.is_file())
     shim=ws/'BootShim' if profile=='stage0' else root/'uefi/handoff/bootshim'
-    for p in (shim/'BootShim.S',shim/'Makefile',ws/'Resources/DTBs/piano.dtb',
+    if profile=='pista':shim=ws/'BootShim'
+    for p in (shim/'BootShim.S',shim/'Makefile',ws/'Resources/DTBs'/f'{device}.dtb',
               root/'tools/build_stage0.sh',root/'tools/build_integrity.py'):
         if p.is_file():files.add(p)
     if profile=='product':

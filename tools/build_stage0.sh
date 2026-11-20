@@ -6,16 +6,20 @@ sun_ws="$sun_root/upstream/Mu-Silicium"
 sun_tools="${SUNUEFI_TOOLCHAIN_ROOT:-$sun_root/build/host-tools/usr}"
 sun_profile="${1:-stage0}"
 case "$sun_profile" in
-  stage0) sun_name=piano; sun_bootshim="$sun_ws/BootShim" ;;
-  probe) sun_name=pianoProbe; sun_bootshim="$sun_root/uefi/handoff/bootshim" ;;
-  linux) sun_name=pianoLinux; sun_bootshim="$sun_root/uefi/handoff/bootshim" ;;
-  gui) sun_name=pianoGui; sun_bootshim="$sun_root/uefi/handoff/bootshim" ;;
-  product) sun_name=pianoProduct; sun_bootshim="$sun_root/uefi/handoff/bootshim" ;;
+  stage0) sun_name=piano; sun_oem=Xiaomi; sun_bootshim="$sun_ws/BootShim" ;;
+  pista) sun_name=pista; sun_oem=Realme; sun_bootshim="$sun_ws/BootShim" ;;
+  probe) sun_name=pianoProbe; sun_oem=Xiaomi; sun_bootshim="$sun_root/uefi/handoff/bootshim" ;;
+  linux) sun_name=pianoLinux; sun_oem=Xiaomi; sun_bootshim="$sun_root/uefi/handoff/bootshim" ;;
+  gui) sun_name=pianoGui; sun_oem=Xiaomi; sun_bootshim="$sun_root/uefi/handoff/bootshim" ;;
+  product) sun_name=pianoProduct; sun_oem=Xiaomi; sun_bootshim="$sun_root/uefi/handoff/bootshim" ;;
   *) printf 'Unknown build profile\n' >&2; exit 1 ;;
 esac
 sun_fd_name=piano-stage0.fd
 sun_buildid=SunUEFI-piano-stage0
-if [[ "$sun_profile" == product ]]; then
+if [[ "$sun_profile" == pista ]]; then
+  sun_fd_name=pista-stage0.fd
+  sun_buildid=SunUEFI-pista-stage0
+elif [[ "$sun_profile" == product ]]; then
   sun_fd_name=PianoUEFI-product.fd
   sun_buildid=SunUEFI-piano-product
 fi
@@ -28,8 +32,8 @@ export NASM_PREFIX="$sun_tools/bin/"
 export PYTHON_COMMAND="$sun_root/.venv/bin/python"
 export WORKSPACE="$sun_ws"
 export EDK_TOOLS_PATH="$sun_ws/Mu_Basecore/BaseTools"
-export PACKAGES_PATH="$sun_ws/Platforms/Xiaomi:$sun_ws/Common/Mu:$sun_ws/Common/Mu_OEM_Sample:$sun_ws/Mu_Basecore:$sun_ws/Silicon/Qualcomm:$sun_ws/Silicon/Silicium:$sun_ws/Silicium-ACPI:$sun_ws/Silicium-ACPI/Silicon/Qualcomm"
-test -f "$sun_ws/Platforms/Xiaomi/${sun_name}Pkg/${sun_name}.dsc"
+export PACKAGES_PATH="$sun_ws/Platforms/$sun_oem:$sun_ws/Common/Mu:$sun_ws/Common/Mu_OEM_Sample:$sun_ws/Mu_Basecore:$sun_ws/Silicon/Qualcomm:$sun_ws/Silicon/Silicium:$sun_ws/Silicium-ACPI:$sun_ws/Silicium-ACPI/Silicon/Qualcomm"
+test -f "$sun_ws/Platforms/$sun_oem/${sun_name}Pkg/${sun_name}.dsc"
 test -x "$sun_tools/bin/lld-link"
 cd "$sun_ws"
 

@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "name": "EnvDxeEnhanced",
+  "file_guid": "90a49afd-422f-08ae-9611-e788d3804845",
+  "source": "Original factory UEFI PE and DXE DEPEX sections from the stock 16.0.7.201 OTA uefi partition image; binary INF generated here",
+  "source_image": {
+    "name": "uefi.img",
+    "sha256": "d2fcc30b5861241f1dd450142cf2d9a321af606387a5696492bcc92bbbe9e578"
+  },
+  "dispatch": "DXE_DRIVER in FV and DXE APRIORI; no ProductFoundation runtime loading"
+}

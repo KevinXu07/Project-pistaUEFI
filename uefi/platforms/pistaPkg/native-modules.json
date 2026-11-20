@@ -1,0 +1,87 @@
+{
+  "EnvDxeEnhanced": {
+    "guid": "90a49afd-422f-08ae-9611-e788d3804845",
+    "pe_sha256": "e8749b9e0907b95347181e2ae43f817d964848ae50660264398bba8d39179453",
+    "depex_sha256": "557c754d26e2667287367a856ea5fcd584f35ab796d24a6a875d1648a4637d23"
+  },
+  "SmemDxe": {
+    "guid": "f541d663-4a48-40aa-aabf-ff158ccae34c",
+    "pe_sha256": "5d27f820390790d79d59cf6feba5501d0cc41c276725747ec388f7c48f1c26a0",
+    "depex_sha256": "557c754d26e2667287367a856ea5fcd584f35ab796d24a6a875d1648a4637d23"
+  },
+  "DALSys": {
+    "guid": "8e9bd160-b184-11df-94e2-0800200c9a66",
+    "pe_sha256": "256df10fad2b0919b0b72693d66db4663c480f8cb01dc9f823b8017be1e63a4d",
+    "depex_sha256": "445084b65f55991565be20b692e489f28006a91c3d0a050eae2a8eebdf12f563"
+  },
+  "ChipInfo": {
+    "guid": "10e193df-9966-44e7-b17c-59dd831e20fc",
+    "pe_sha256": "76e51b9feb666d064328c63e413dcb34fbb5d386edb86a02f2df524b736a34ac",
+    "depex_sha256": "5a2204901e9095761d883230974b7d3265bb85eb6eecfd02550ce4d17ec61802"
+  },
+  "PlatformInfoDxeDriver": {
+    "guid": "b105211b-bbbd-4add-a3b0-d1cf4a52154c",
+    "pe_sha256": "9f8e7483e84d5dc2cdc52bade02c2fd4485f94c024d1c5c4e1ea3bae841ad527",
+    "depex_sha256": "51e48aff95a5c61299f0c6b7550d1e2348078025c313f63c206f4d6f5cf36477"
+  },
+  "HWIODxeDriver": {
+    "guid": "af9763a2-033b-4109-8e17-56a98d380c92",
+    "pe_sha256": "f2bc4e30e8a8796eba7d208c1b02f086741eeb386b4b45bb0cf8ffc1970d55d7",
+    "depex_sha256": "51e48aff95a5c61299f0c6b7550d1e2348078025c313f63c206f4d6f5cf36477"
+  },
+  "ULogDxe": {
+    "guid": "e43128a8-8692-42b6-8afa-676158578d18",
+    "pe_sha256": "257900e74d9765edfc625de91fb2c57e11a8bba01ce265136b13eb31f424a33a",
+    "depex_sha256": "557c754d26e2667287367a856ea5fcd584f35ab796d24a6a875d1648a4637d23"
+  },
+  "CmdDbDxe": {
+    "guid": "aba01ff8-2ccb-4e12-8b2e-cd3f4a742993",
+    "pe_sha256": "e45947d56b34b5bbdfbc8964a4b7353a5541042d50a6bea58808c2ec35e50142",
+    "depex_sha256": "557c754d26e2667287367a856ea5fcd584f35ab796d24a6a875d1648a4637d23"
+  },
+  "PwrUtilsDxe": {
+    "guid": "0401b830-bff9-44a2-a5f6-95734a33c017",
+    "pe_sha256": "b2c50679ad0ce15f90c0d4396015c0710b8bacba9821e2119ffd1208022a21b6",
+    "depex_sha256": "69f6f40457ed7a884f56e034cb84bf53bf4cb3210cc31839e0d1a5d86b460a94"
+  },
+  "RpmhDxe": {
+    "guid": "cb29f4d1-7f37-4692-a416-93e82e219766",
+    "pe_sha256": "45f7c6ee3fc3fe86c164e140aa91157f4f85e2cec002ea3c08ca33c91ec3c52e",
+    "depex_sha256": "4222f37e19a4b252aa185240a267b613ee5e464543e682f222a21fea7c0ed2a2"
+  },
+  "NpaDxe": {
+    "guid": "cb29f4d1-7f37-4692-a416-93e82e219711",
+    "pe_sha256": "5799fc84bdc5d7251ebe6c7b8ef34605a37c87b0b07d8263398d4d770924ccdb",
+    "depex_sha256": "557c754d26e2667287367a856ea5fcd584f35ab796d24a6a875d1648a4637d23"
+  },
+  "VcsDxe": {
+    "guid": "8bd3b475-401a-4b0b-9315-edee61a1eae5",
+    "pe_sha256": "9ffeed44ce75467174537ea5fe43abc9c6277224b8594d876ebb394192c37a34",
+    "depex_sha256": "c8001e9cea134cf8205ad4167fd0ff3b8dab6ecf325c723158cc6916e4a9b1cf"
+  },
+  "ClockDxe": {
+    "guid": "4db5dea6-5302-4d1a-8a82-677a683b0d29",
+    "pe_sha256": "3df5c180394cf9f27e634e8fdf2f27047f86f78c73022e667ed33807cb6c2965",
+    "depex_sha256": "c8001e9cea134cf8205ad4167fd0ff3b8dab6ecf325c723158cc6916e4a9b1cf"
+  },
+  "HALIOMMU": {
+    "guid": "9a00771f-36d4-4dd5-8916-c48ed9b16b86",
+    "pe_sha256": "7fec4d919da43efb8b2dff806193bb710631542da2d73b723683242bc43ca9b6",
+    "depex_sha256": "8d212b55931b8b7178a06d7d5ff305306299accdbd845743b3c58bdf2e62a45f"
+  },
+  "DALTLMM": {
+    "guid": "8681cc5a-0df6-441e-b4b8-e915c538f067",
+    "pe_sha256": "91aa0b6348db6f6a4d259dcedf907a670b4e6beb479496508729ee055023f638",
+    "depex_sha256": "51e48aff95a5c61299f0c6b7550d1e2348078025c313f63c206f4d6f5cf36477"
+  },
+  "Qup": {
+    "guid": "a16b79d2-afe0-4aed-a3ab-8ce3fd0f8c71",
+    "pe_sha256": "6343370369d5030e4efbc08a23a9468bd6dec83b422c4778d6157e7d86b8f16a",
+    "depex_sha256": "95cfa13b1308bf157c24a44e7492c34335e9af953a0056da17fb047bdeb2dd50"
+  },
+  "I2C": {
+    "guid": "04de8591-d2b3-4077-bbbe-b12070094eb6",
+    "pe_sha256": "a497bf34816b28224910cc1a283293f138615944351f56017ccc974aadf3be7d",
+    "depex_sha256": "95cfa13b1308bf157c24a44e7492c34335e9af953a0056da17fb047bdeb2dd50"
+  }
+}

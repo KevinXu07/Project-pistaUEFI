@@ -1,0 +1,19 @@
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = PistaCapsuleArchNullDxe
+  FILE_GUID = 9E071F58-5E13-5D40-B73B-D733E6E63732
+  MODULE_TYPE = DXE_RUNTIME_DRIVER
+  VERSION_STRING = 0.1
+  ENTRY_POINT = CapsuleArchNullEntry
+[Sources]
+  CapsuleArchNullDxe.c
+[Packages]
+  MdePkg/MdePkg.dec
+[LibraryClasses]
+  UefiDriverEntryPoint
+  UefiBootServicesTableLib
+  UefiRuntimeServicesTableLib
+[Protocols]
+  gEfiCapsuleArchProtocolGuid
+[Depex]
+  TRUE

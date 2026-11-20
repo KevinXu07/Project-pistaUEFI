@@ -1,0 +1,26 @@
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = PistaStage0BootManagerLib
+  FILE_GUID = 870012AA-30F2-51AB-A459-1D5090097A4D
+  MODULE_TYPE = DXE_DRIVER
+  VERSION_STRING = 0.1
+  LIBRARY_CLASS = DeviceBootManagerLib|DXE_DRIVER
+[Sources]
+  Stage0BootManagerLib.c
+  NativeModules.h
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  MsCorePkg/MsCorePkg.dec
+[LibraryClasses]
+  UefiLib
+  UefiBootServicesTableLib
+  UefiRuntimeServicesTableLib
+  DebugLib
+  BaseLib
+  DevicePathLib
+  MemoryAllocationLib
+[Protocols]
+  gEfiGraphicsOutputProtocolGuid
+  gEfiLoadedImageProtocolGuid
+  gEfiFirmwareVolume2ProtocolGuid

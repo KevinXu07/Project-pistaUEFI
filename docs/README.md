@@ -29,6 +29,7 @@
 | [测试](devel/testing.md) | 主机检查和设备验证 |
 | [发布要求与未完成工作](devel/release.md) | 原生软件包、标准启动、硬件适配及发布前的检查清单 |
 | [本地输入](devel/local-inputs.md) | 完整构建需要的、不在仓库里的文件 |
+| [Realme GT7 Pro 诊断固件](devel/pista.md) | pista 的输入生成、编译、临时启动和设备差异 |
 | [补丁登记](devel/patches.md) | 补丁目录和选用规则 |
 | [贡献指南](../CONTRIBUTING.md) | 提交规范和流程 |
 

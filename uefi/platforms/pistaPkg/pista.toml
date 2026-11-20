@@ -1,0 +1,13 @@
+# NOT hardware validated. Stage-0 only.
+[boot_shim]
+requires_kernel_header = true
+[uefi_fd]
+base = 0xA7100000
+size = 0x300000
+[boot_image_kernel]
+# The stock 16.0.7.201 boot.img carries an uncompressed MZ kernel image,
+# unlike piano's gzipped kernel; the loader path needs on-device confirmation.
+kernel_compression = "none"
+append_dtb = true
+[boot_image]
+header_version = 4
