@@ -8,7 +8,9 @@ from pathlib import Path
 import struct
 import subprocess
 import sys
-from analyze_capture import parse_fdt
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from fdt_parse import parse_fdt
 from build_integrity import validate
 
 def main():
@@ -16,7 +18,7 @@ def main():
     ap.add_argument('--profile', choices=('stage0', 'probe', 'linux', 'gui'), default='stage0')
     ap.add_argument('--header-version', type=int, choices=(3,4), default=4)
     args = ap.parse_args()
-    root = Path(__file__).resolve().parent.parent
+    root = Path(__file__).resolve().parent.parent.parent
     ws = root / 'upstream/Mu-Silicium'
     out = root / 'artifacts' / args.profile
     try:
