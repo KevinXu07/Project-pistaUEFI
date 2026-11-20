@@ -5,22 +5,51 @@
   MODULE_TYPE = DXE_DRIVER
   VERSION_STRING = 0.1
   LIBRARY_CLASS = DeviceBootManagerLib|DXE_DRIVER
+# The Piano*.c sources and the shared core headers are copied from uefi/core
+# into the workspace copy of this library by tools/dev/prepare_pista.py.
 [Sources]
   Stage0BootManagerLib.c
   NativeModules.h
+  PistaDeviceTree.h
+  PianoUsbController.c
+  PianoDwc3Device.c
+  PianoUsbControl.c
+  PianoUsbPhy.c
+  PianoFastboot.c
+  PianoFastbootScreen.c
+  PianoSmmu.c
+  PianoDma.c
+  PianoOwnedSmmu.c
+  PianoIoPageTable.c
 [Packages]
   MdePkg/MdePkg.dec
   MdeModulePkg/MdeModulePkg.dec
   MsCorePkg/MsCorePkg.dec
+  QcomPkg/QcomPkg.dec
+  SiliciumPkg/SiliciumPkg.dec
+  CryptoPkg/CryptoPkg.dec
 [LibraryClasses]
   UefiLib
   UefiBootServicesTableLib
   UefiRuntimeServicesTableLib
   DebugLib
   BaseLib
+  BaseMemoryLib
   DevicePathLib
   MemoryAllocationLib
+  TimerLib
+  IoLib
+  CacheMaintenanceLib
+  DxeServicesTableLib
+  FdtLib
+  # The null implementation without secure boot: "oem sha256" reports unavailable.
+  BaseCryptLib
 [Protocols]
   gEfiGraphicsOutputProtocolGuid
   gEfiLoadedImageProtocolGuid
   gEfiFirmwareVolume2ProtocolGuid
+[Guids]
+  gEfiEventExitBootServicesGuid
+[BuildOptions]
+  # USB Fastboot over USB 2.0 without storage: no UFS reads, RAM boot or USB host.
+  GCC:*_CLANGPDB_AARCH64_CC_FLAGS = -DPIANO_USB_SERVICE=1 -DPIANO_USB_EP0=1 -DPIANO_USB_FASTBOOT=1 -DPIANO_USB_SCREENSHOT=1 -DPIANO_USB_SUPERSPEED=0 -DSUNUEFI_DEVICE_NAME=\"pista\"

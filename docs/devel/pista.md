@@ -2,11 +2,13 @@
 
 `pista` 是 Realme GT7 Pro（RMX5010，SM8750-AB）的代号。这一页说明怎样从原厂固件生成 pista 的 UEFI 输入、编译诊断固件、用 `fastboot boot` 临时启动它，以及移植时确认过的设备差异。
 
-诊断固件只验证 UEFI 能在这台手机上启动：它运行到启动管理阶段，在屏幕上显示设备信息和原厂驱动的运行情况，然后关机。它不带存储、USB 和系统引导，不写任何分区。产品核心还没有移植。
+诊断固件验证 UEFI 能在这台手机上启动：它运行到启动管理阶段，在屏幕上显示设备信息和原厂驱动的运行情况，然后提供 UEFI Fastboot，供电脑截图、查询状态和重启。它不访问内部存储、不启动系统，也不写任何分区。产品核心还没有移植。
 
 ## 现状
 
-用 `fastboot boot` 临时启动时，固件会依次完成 BootShim、SEC、DXE 和 BDS 阶段，并接着使用 ABL 已经点亮的屏幕（1264×2780）。piano 产品核心依赖的 16 个原厂基础模块全部能运行，横幅显示 `Stock drivers running: 16/16`。BDS 找不到启动项时显示 "No Operating System Found!"，10 秒后关机；如果连着 USB，手机随后会自动开机回到 Android。
+用 `fastboot boot` 临时启动时，固件会依次完成 BootShim、SEC、DXE 和 BDS 阶段，并接着使用 ABL 已经点亮的屏幕（1264×2780）。piano 产品核心依赖的 16 个原厂基础模块全部能运行，横幅显示 `Stock drivers running: 16/16`。随后固件启动 USB Fastboot 服务，电脑上可以看到 `SunUEFI-pista`。
+
+Fastboot 服务启动失败时，横幅显示原因，固件在 45 秒后冷重启回 Android。电脑发送 `fastboot continue` 时，固件停止服务，提示 "No Operating System Found!"，10 秒后关机；连着 USB 时手机随后会自动开机回到 Android。
 
 ## 生成输入
 
@@ -60,7 +62,33 @@ adb reboot bootloader
 fastboot boot artifacts/pista/pista-stage0-UNTESTED.img
 ```
 
-镜像只加载到内存，不写入分区。固件卡住时，长按电源键可以强制重启；ABL 启动的 phoenix 看门狗也会在约 90 秒后让整机复位。
+镜像只加载到内存，不写入分区。固件卡住时，长按电源键可以强制重启；固件挂死在断言里时，看门狗也会在约 90 秒后让整机复位。
+
+## UEFI Fastboot
+
+横幅出现 `USB Fastboot ready` 后，电脑上用 `SunUEFI-pista` 这个序列号访问固件：
+
+```bash
+fastboot -s SunUEFI-pista getvar product
+```
+
+```bash
+fastboot -s SunUEFI-pista oem screenshot
+```
+
+```bash
+fastboot -s SunUEFI-pista get_staged pista-screenshot.bmp
+```
+
+```bash
+fastboot -s SunUEFI-pista reboot
+```
+
+`oem screenshot` 导出当前屏幕的 24 位 BMP（1264×2780，约 10 MB）。诊断固件的日志直接打印在屏幕上，所以截图就能看到日志；屏幕只在 USB 有收发时打印新日志，空闲时画面不动是正常的。`oem status` 输出 USB 控制器和存储策略的状态，`reboot` 会先停止服务、释放 USB 的 DMA 和 SMMU 资源，再冷重启。Fastboot 空闲运行几分钟不会被看门狗复位。
+
+这一版不带存储：`fetch`、`flash`、`erase` 都会失败，存储策略显示 `read-only`。`oem ramlog` 还不能用：piano 把内存日志写在 `0xA3500000`，那是 piano 的 ramoops 区域；在 pista 上这里是显示的 Demura 数据，诊断固件不往里写。`oem sha256` 返回 "SHA256 unavailable"，因为关闭安全启动时 BaseCryptLib 是空实现。
+
+服务代码来自共用的 `uefi/core/usb/` 和 `uefi/core/memory/`，由 `prepare_pista.py` 复制进工作区的诊断启动管理库，以 USB 2.0 方式编译（`PIANO_USB_SUPERSPEED=0`、`SUNUEFI_DEVICE_NAME="pista"`）。GT7 Pro 的 USB3 PHY 在板级设备树里是禁用的，`maximum-speed` 为 `high-speed`，所以固件不初始化 QMP PHY，按 Linux `dwc3-qcom` 对纯 USB 2.0 板子的做法让控制器从 UTMI 取 PIPE 时钟，并把 DWC3 设为 High-Speed。M31 eUSB2 PHY 和中继器的供电与 piano 相同（ldod2、ldof1 为 0.88 V，ldob5 为 3.1 V，ldob15 为 1.8 V），通过原厂 RpmhDxe 投票。诊断固件没有完整的板级设备树，服务读取的 SMMU 和 USB 节点由 `prepare_pista.py` 从 `pista.dtb` 中裁出，生成 `PistaDeviceTree.h`。
 
 ## 原厂模块的加载顺序
 
@@ -79,14 +107,15 @@ SmemDxe → DALSys → HWIODxeDriver → ChipInfo → PlatformInfoDxeDriver → 
 | TrustZone 相关模块 | `fastboot boot` 起来的固件里，`ScmDxeCompat` 调用 TrustZone 失败（`ScmCall ret=0xE`），`TzDxeLA` 随后断言挂死 | 诊断固件不带 ShmBridgeDxeLA、ScmDxeCompat、TzDxeLA。16 个基础模块都不需要它们；UFSDxe、VariableDxe、DisplayDxe 等模块会用到 |
 | CPU 调频 | ClockDxe 打印 `ClockInitCPU: SCMI LocateProtocol failed` 后继续运行 | SCMI 协议由 QcomScmiDxe 提供，而它排在需要 TrustZone 的 MailboxDxe 之后。没有它时 CPU 保持启动时的频率，UEFI 阶段不受影响 |
 | 内核格式 | 原厂 `boot.img` 是 v4 头，内核是未压缩的 PE | ABL 同样接受 gzip 压缩的 BootShim 加固件 |
-| 看门狗 | ABL 会启动 phoenix 看门狗，固件不喂狗时约 90 秒后整机复位 | 固件挂死时手机会自己重启；产品核心需要处理它 |
+| USB | 只有 USB 2.0，USB3 PHY 在设备树中禁用 | Fastboot 以 High-Speed 工作，不需要 Type-C 正反面切换 |
+| 看门狗 | 固件挂死在断言里时约 90 秒后整机复位；Fastboot 空闲运行几分钟没有复位 | 挂死时手机会自己重启 |
 | 运行级别 | 固件运行在 EL1 | 与高通启动链一致，EL2 由虚拟机管理器占用 |
 
 ## 文件
 
 | 路径 | 内容 |
 | --- | --- |
-| `uefi/platforms/pistaPkg/` | 诊断平台。`MemoryMapLib.c`、`ConfigurationMapLib.c`、`native-memory-map.json`、`native-modules.json` 和 `Stage0BootManagerLib/NativeModules.h` 由 `prepare_pista.py` 生成 |
+| `uefi/platforms/pistaPkg/` | 诊断平台。`MemoryMapLib.c`、`ConfigurationMapLib.c`、`native-memory-map.json`、`native-modules.json`、`Stage0BootManagerLib/NativeModules.h` 和 `Stage0BootManagerLib/PistaDeviceTree.h` 由 `prepare_pista.py` 生成 |
 | `vendor/pista/` | 原厂设备树、16 个基础模块和 EnvDxeEnhanced，`manifest.json` 记录来源和哈希 |
 | `tools/dev/stage_pista_capture.py` | 把 OTA 分区镜像放进 `private/pista-capture/` |
 | `tools/dev/extract_uefi_fv.py` | 从 `uefi` 分区提取 FV 里的 DXE 模块 |

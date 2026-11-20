@@ -11,7 +11,12 @@
 #include <Protocol/GraphicsOutput.h>
 #include <Protocol/LoadedImage.h>
 #include <Protocol/FirmwareVolume2.h>
+#include <Library/TimerLib.h>
+#include <Library/BaseMemoryLib.h>
 #include "NativeModules.h"
+#include "PistaDeviceTree.h"
+#include "PianoUsbService.h"
+#include "../Protocol/PianoProductRuntime.h"
 
 STATIC EFI_EVENT mReturnToAndroidEvent;
 
@@ -100,6 +105,77 @@ EFI_HANDLE EFIAPI DeviceBootManagerBeforeConsole (
   return NULL;
 }
 
+STATIC UINT64 mCounterStart;
+STATIC UINT64 mCounterEnd;
+STATIC UINT64 mCounterFrequency;
+
+STATIC UINT64 FastbootNowUs (VOID *Context)
+{
+  UINT64 Counter = GetPerformanceCounter ();
+  UINT64 Ticks = mCounterEnd >= mCounterStart ? Counter - mCounterStart : mCounterStart - Counter;
+  UINT64 Remainder;
+  UINT64 Seconds = DivU64x64Remainder (Ticks, mCounterFrequency, &Remainder);
+
+  (VOID)Context;
+  return Seconds * 1000000 + DivU64x64Remainder (Remainder * 1000000, mCounterFrequency, NULL);
+}
+
+// The piano PMIC read-only power probe is not part of the pista diagnostic.
+VOID PianoProbeUsbPower (CONST VOID *Fdt)
+{
+  (VOID)Fdt;
+}
+
+// Runs the resident USB Fastboot service without storage. Returns when the
+// service cannot start or the host sends "continue"; "reboot" stops the
+// service, releases its DMA and SMMU resources, then cold resets.
+STATIC VOID RunFastboot (VOID)
+{
+  PIANO_DWC3_SERVICE_CONFIG       Config;
+  PIANO_DWC3_SERVICE_STATUS       State;
+  PIANO_USB_SERVICE_RETIRE_REPORT Report;
+  EFI_STATUS                      Status;
+
+  mCounterFrequency = GetPerformanceCounterProperties (&mCounterStart, &mCounterEnd);
+  if ((mCounterFrequency == 0) || (mCounterStart == mCounterEnd)) {
+    Print (L"USB Fastboot not started: no performance counter\r\n");
+    return;
+  }
+  ZeroMem (&Config, sizeof (Config));
+  Config.NowUs = FastbootNowUs;
+  Status = PianoUsbControllerServiceStart (mPistaDeviceTree, &Config);
+  if (EFI_ERROR (Status)) {
+    Print (L"USB Fastboot not started: %r\r\n", Status);
+    return;
+  }
+  Print (L"USB Fastboot ready: run \"fastboot devices\" on the computer (SunUEFI-pista).\r\n");
+  ZeroMem (&State, sizeof (State));
+  for ( ; ; ) {
+    Status = PianoUsbControllerServicePumpApp (PIANO_PRODUCT_PUMP_APP, 10000);
+    if ((Status != EFI_SUCCESS) && (Status != EFI_NOT_READY)) {
+      Print (L"USB Fastboot stopped: service error %r\r\n", Status);
+      break;
+    }
+    ZeroMem (&State, sizeof (State));
+    if ((PianoUsbControllerServiceGetStatus (&State) == EFI_SUCCESS) &&
+        (State.Phase == PianoUsbServiceStopRequested)) {
+      break;
+    }
+    gBS->Stall (1000);
+  }
+  ZeroMem (&Report, sizeof (Report));
+  Status = PianoUsbControllerServiceStop (EFI_SUCCESS, &Report);
+  Print (L"USB Fastboot closed: %r, resources released %u\r\n", Status, (UINT32)Report.Clean);
+  if ((State.Action == PianoUsbServiceActionReboot) && !EFI_ERROR (Status) && Report.Clean) {
+    gRT->ResetSystem (EfiResetCold, EFI_SUCCESS, 0, NULL);
+  }
+  if (!Report.Clean) {
+    // DMA may still target its buffers; never hand over or reset.
+    Print (L"USB resources could not be released. Hold the power key to restart.\r\n");
+    CpuDeadLoop ();
+  }
+}
+
 EFI_DEVICE_PATH_PROTOCOL **EFIAPI DeviceBootManagerAfterConsole (VOID)
 {
   EFI_GRAPHICS_OUTPUT_PROTOCOL *Gop = NULL;
@@ -118,6 +194,9 @@ EFI_DEVICE_PATH_PROTOCOL **EFIAPI DeviceBootManagerAfterConsole (VOID)
       Gop->Mode->Info->PixelsPerScanLine, Gop->Mode->FrameBufferBase);
   }
   PrintNativeDriverSummary ();
+  DEBUG ((DEBUG_WARN, "PISTA_STAGE0_CONSOLE_READY EL%u\n", (UINT32)(CurrentEl >> 2)));
+  RunFastboot ();
+  // Reached only when Fastboot could not start or the host sent "continue".
   // This cannot recover a hang that happens before the console callback.
   Status = gBS->CreateEvent (EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK,
                            ReturnToAndroid, NULL, &mReturnToAndroidEvent);
@@ -130,7 +209,6 @@ EFI_DEVICE_PATH_PROTOCOL **EFIAPI DeviceBootManagerAfterConsole (VOID)
       mReturnToAndroidEvent = NULL;
     }
   }
-  DEBUG ((DEBUG_WARN, "PISTA_STAGE0_CONSOLE_READY EL%u\n", (UINT32)(CurrentEl >> 2)));
   return NULL;
 }
 

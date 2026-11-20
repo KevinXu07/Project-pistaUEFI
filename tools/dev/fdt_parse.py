@@ -2,7 +2,7 @@
 """Minimal FDT (flat device tree) parser for host-side generation work.
 
 parse_fdt() returns {path: {property: bytes}} with paths like '/soc/memorymap'.
-No dependencies; the parser only reads, it never rewrites blobs.
+build_fdt() writes such a dictionary back as a new FDT. No dependencies.
 """
 import struct
 
@@ -50,6 +50,48 @@ def parse_fdt(data):
         else:
             raise ValueError(f'Bad FDT token 0x{token:X} at 0x{pos - 4:X}')
     return nodes
+
+
+def build_fdt(nodes):
+    """Return an FDT (version 17) holding exactly the given nodes and properties.
+
+    Missing parent nodes are created empty; nodes are written in path order.
+    """
+    tree = {'/': {}}
+    for path in nodes:
+        parts = [part for part in path.split('/') if part]
+        for depth in range(1, len(parts) + 1):
+            tree.setdefault('/' + '/'.join(parts[:depth]), {})
+    for path, props in nodes.items():
+        tree[path] = props
+    strings, offsets = bytearray(), {}
+    struct_block = bytearray()
+
+    def emit(path):
+        name = '' if path == '/' else path.rsplit('/', 1)[1]
+        raw = name.encode() + b'\0'
+        struct_block.extend(struct.pack('>I', FDT_BEGIN_NODE) + raw + b'\0' * (_pad4(len(raw)) - len(raw)))
+        for prop, value in tree[path].items():
+            if prop not in offsets:
+                offsets[prop] = len(strings)
+                strings.extend(prop.encode() + b'\0')
+            struct_block.extend(struct.pack('>III', FDT_PROP, len(value), offsets[prop]) + value +
+                                b'\0' * (_pad4(len(value)) - len(value)))
+        prefix = '/' if path == '/' else path + '/'
+        for child in sorted(p for p in tree if p != path and p.startswith(prefix) and '/' not in p[len(prefix):]):
+            emit(child)
+        struct_block.extend(struct.pack('>I', FDT_END_NODE))
+
+    emit('/')
+    struct_block.extend(struct.pack('>I', FDT_END))
+    header_size, reserve_size = 40, 16
+    off_reserve = header_size
+    off_struct = off_reserve + reserve_size
+    off_strings = off_struct + len(struct_block)
+    total = off_strings + len(strings)
+    header = struct.pack('>10I', 0xd00dfeed, total, off_struct, off_strings, off_reserve,
+                         17, 16, 0, len(strings), len(struct_block))
+    return header + b'\0' * reserve_size + bytes(struct_block) + bytes(strings)
 
 
 def text(value):
