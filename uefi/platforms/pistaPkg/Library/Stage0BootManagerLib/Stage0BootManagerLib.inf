@@ -48,6 +48,7 @@
   IoLib
   CacheMaintenanceLib
   DxeServicesTableLib
+  DxeServicesLib
   FdtLib
   PrintLib
   SerialPortLib

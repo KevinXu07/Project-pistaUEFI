@@ -1,0 +1,25 @@
+From 20fc5190ebcf26c280982b16b1dab1ed86aa87bd Mon Sep 17 00:00:00 2001
+From: KevinXu07 <im2evenx40702@qq.com>
+Date: Wed, 25 Nov 2026 17:54:22 +0800
+Subject: [PATCH] dt-bindings: arm: qcom: Document Realme GT7 Pro
+
+Add the compatible for the Realme GT7 Pro (pista, RMX5010) smartphone,
+based on the SM8750 SoC.
+
+Signed-off-by: KevinXu07 <im2evenx40702@qq.com>
+---
+ Documentation/devicetree/bindings/arm/qcom.yaml | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Documentation/devicetree/bindings/arm/qcom.yaml b/Documentation/devicetree/bindings/arm/qcom.yaml
+index 1636f11a4..4ba90a3bc 100644
+--- a/Documentation/devicetree/bindings/arm/qcom.yaml
++++ b/Documentation/devicetree/bindings/arm/qcom.yaml
+@@ -1170,6 +1170,7 @@ properties:
+           - enum:
+               - qcom,sm8750-mtp
+               - qcom,sm8750-qrd
++              - realme,pista
+               - xiaomi,piano
+           - const: qcom,sm8750
+ 

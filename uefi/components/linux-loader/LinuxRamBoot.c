@@ -46,14 +46,21 @@ STATIC INITRD_PATH mPath = {
   { { MEDIA_DEVICE_PATH, MEDIA_VENDOR_DP, { sizeof (VENDOR_DEVICE_PATH), 0 } }, LINUX_EFI_INITRD_MEDIA_GUID },
   { END_DEVICE_PATH_TYPE, END_ENTIRE_DEVICE_PATH_SUBTYPE, { sizeof (EFI_DEVICE_PATH_PROTOCOL), 0 } }
 };
+// A board build supplies its own kernel command line in LinuxRamBootCommand.h
+// as LINUX_RAM_BOOT_COMMAND.
+#if __has_include("LinuxRamBootCommand.h")
+#include "LinuxRamBootCommand.h"
+#else
 // Board-only parameters from the hash-checked piano cmdline capture. Retain
 // HWID-dependent PHY/PMIC selection without the native disk logging arguments.
-STATIC CONST CHAR8 mCommandAscii[] =
-  "rdinit=/init ro nokaslr efi=novamap,debug console=ttyGS0,115200 loglevel=7 panic=15 "
-  "hwid.hwid_value=589824 hwid.project=9 hwid.build_adc=51282 hwid.project_adc=39406";
-STATIC CONST CHAR16 mCommand[] =
-  L"rdinit=/init ro nokaslr efi=novamap,debug console=ttyGS0,115200 loglevel=7 panic=15 "
-  L"hwid.hwid_value=589824 hwid.project=9 hwid.build_adc=51282 hwid.project_adc=39406";
+#define LINUX_RAM_BOOT_COMMAND \
+  "rdinit=/init ro nokaslr efi=novamap,debug console=ttyGS0,115200 loglevel=7 panic=15 " \
+  "hwid.hwid_value=589824 hwid.project=9 hwid.build_adc=51282 hwid.project_adc=39406"
+#endif
+#define LINUX_RAM_BOOT_WIDE2(Text) L ## Text
+#define LINUX_RAM_BOOT_WIDE(Text)  LINUX_RAM_BOOT_WIDE2 (Text)
+STATIC CONST CHAR8 mCommandAscii[] = LINUX_RAM_BOOT_COMMAND;
+STATIC CONST CHAR16 mCommand[] = LINUX_RAM_BOOT_WIDE (LINUX_RAM_BOOT_COMMAND);
 
 VOID PianoStopFaultRecovery(VOID);
 EFI_STATUS PianoStartFaultRecovery(VOID);
@@ -258,6 +265,26 @@ EFI_STATUS EFIAPI LinuxRamBootEntry (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *S
         (CompareMem (P, mMagic, sizeof (mMagic)) && CompareMem(P,mMagicV2,sizeof(mMagicV2)))) { continue; }
     Header = (CONST LINUX_RAM_HEADER *)P;
     break;
+  }
+  if (Header == NULL) {
+    // Some ABLs (pista) pass the vendor_boot and init_boot ramdisks instead of
+    // the boot image's own. There the payload follows the FD inside the
+    // kernel image; BootShim records the FD's load address (offset 72) and
+    // size (offset 88). Only a v2 payload whose parts all lie in known RAM is
+    // accepted; the hash checks below still cover every byte.
+    UINT64 Embedded = Record[9] + Record[11];
+    CONST LINUX_RAM_HEADER_V2 *E = (CONST LINUX_RAM_HEADER_V2 *)(UINTN)Embedded;
+    if (Record[9] != 0 && Record[11] != 0 && (Embedded & 7) == 0 && KnownRam (Embedded, sizeof (*E)) &&
+        !CompareMem (E->Base.Magic, mMagicV2, sizeof (mMagicV2)) && E->Base.HeaderSize == sizeof (*E) &&
+        E->Base.KernelSize <= 0x4000000 && E->Base.InitrdSize <= 0x2000000 && E->DtbSize <= 0x200000) {
+      UINT64 Total = sizeof (*E) + E->Base.KernelSize + E->Base.InitrdSize + E->DtbSize;
+      if (KnownRam (Embedded, Total)) {
+        Header = &E->Base;
+        Start  = Embedded;
+        End    = Embedded + Total;
+        DEBUG ((DEBUG_WARN, "SUNUEFI_LINUX_PAYLOAD_EMBEDDED 0x%lx..0x%lx\n", Start, End));
+      }
+    }
   }
   if (Header == NULL) { Print (L"Linux payload was not found in boot RAM.\r\n"); DEBUG ((DEBUG_WARN, "SUNUEFI_LINUX_PAYLOAD_NOT_FOUND\n")); return EFI_NOT_FOUND; }
   BOOLEAN V2=Header->Version==2;

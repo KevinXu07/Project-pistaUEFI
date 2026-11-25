@@ -2,7 +2,7 @@
 
 `pista` 是 Realme GT7 Pro（RMX5010，SM8750-AB）的代号。这一页说明怎样从原厂固件生成 pista 的 UEFI 输入、编译诊断固件、用 `fastboot boot` 临时启动它，以及移植时确认过的设备差异。
 
-诊断固件验证 UEFI 能在这台手机上启动：它运行到启动管理阶段，在屏幕上显示设备信息和原厂驱动的运行情况，然后提供 UEFI Fastboot，供电脑截图、查询状态、只读导出分区和重启。它不启动系统，也不写任何分区。产品核心还没有移植。
+诊断固件验证 UEFI 能在这台手机上启动：它运行到启动管理阶段，在屏幕上显示设备信息和原厂驱动的运行情况，然后提供 UEFI Fastboot，供电脑截图、查询状态、只读导出分区和重启。同一份固件还能从内存启动主线 Linux 内核，见[从内存启动 Linux](#从内存启动-linux)。它不写任何分区。产品核心还没有移植。
 
 ## 现状
 
@@ -106,6 +106,58 @@ UFS 使用 SunUEFI 自己的只读驱动（`uefi/core/storage/`），不用原�
 
 服务代码来自共用的 `uefi/core/usb/`、`uefi/core/storage/` 和 `uefi/core/memory/`，由 `prepare_pista.py` 复制进工作区的诊断启动管理库，以 USB 2.0 方式编译（`PIANO_USB_SUPERSPEED=0`、`SUNUEFI_DEVICE_NAME="pista"`）。GT7 Pro 的 USB3 PHY 在板级设备树里是禁用的，`maximum-speed` 为 `high-speed`，所以固件不初始化 QMP PHY，按 Linux `dwc3-qcom` 对纯 USB 2.0 板子的做法让控制器从 UTMI 取 PIPE 时钟，并把 DWC3 设为 High-Speed。M31 eUSB2 PHY 和中继器的供电与 piano 相同（ldod2、ldof1 为 0.88 V，ldob5 为 3.1 V，ldob15 为 1.8 V），通过原厂 RpmhDxe 投票。诊断固件没有完整的板级设备树，服务读取的 SMMU 和 USB 节点由 `prepare_pista.py` 从 `pista.dtb` 中裁出，生成 `PistaDeviceTree.h`。
 
+## 从内存启动 Linux
+
+诊断固件在横幅之后、启动 USB Fastboot 之前，会检查启动镜像里有没有 Linux 载荷。有就校验后启动内核，没有就照常进入 Fastboot。目前内核能启动到 initramfs，电脑通过 USB 串口得到一个 shell，屏幕显示内核日志。启动过程只占用内存，不访问存储，重启后回到 Android。
+
+### 构建
+
+内核是 7.3.3 stable（`d50d994b`）加上 `patches/linux/7.3/` 里的全部补丁，pista 的设备树在补丁 0141 到 0143 里。在 WSL 里取源码并打补丁（`series.json` 记录了每个补丁的 SHA-256 和打完后的源码树，最后一个补丁之后的源码树应为 `target_tree`）：
+
+```bash
+git init linux && cd linux && git fetch --depth=1 https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd && git checkout FETCH_HEAD
+```
+
+```bash
+for p in $(python3 -c "import json;print(' '.join(r['file'] for r in json.load(open('<仓库>/patches/linux/7.3/series.json'))['patches']))"); do git am -q <仓库>/patches/linux/7.3/$p || break; done
+```
+
+配置是 `defconfig` 加上 `linux/configs/piano-ram.config` 和 `linux/configs/pista-ram.config`：驱动全部编进内核，不带存储和模块。编译内核和设备树：
+
+```bash
+make O=../out ARCH=arm64 LLVM=1 defconfig && scripts/kconfig/merge_config.sh -m -O ../out ../out/.config <仓库>/linux/configs/piano-ram.config <仓库>/linux/configs/pista-ram.config && make O=../out ARCH=arm64 LLVM=1 olddefconfig
+```
+
+```bash
+make O=../out ARCH=arm64 LLVM=1 -j$(nproc) Image qcom/sm8750-realme-pista.dtb
+```
+
+把内核、initramfs 和设备树打成载荷，再和固件一起打成启动镜像。initramfs 由 `linux/initramfs/pista-ram/init` 和 Debian 的 `busybox-static` arm64 包（`config/release.json` 锁定的 1.38.0-3+b2）生成：
+
+```bash
+python3 tools/dev/package_pista_linux.py --kernel ../out/arch/arm64/boot/Image --dtb ../out/arch/arm64/boot/dts/qcom/sm8750-realme-pista.dtb --busybox-deb busybox-static_1.38.0-3+b2_arm64.deb
+```
+
+```bash
+SUNUEFI_TOOLCHAIN_ROOT=/usr .venv/bin/python tools/dev/package_stage0.py --profile pista --header-version 4 --linux-payload artifacts/pista/linux-payload.bin
+```
+
+产物是 `artifacts/pista/pista-linux.img`（约 17 MB），用 `fastboot boot` 启动。
+
+### 使用
+
+启动后约 12 秒，电脑上出现一个新的 USB 串口（Windows 显示为"USB 串行设备"），用 115200 波特率打开就是 shell。手机屏幕显示内核版本和 USB 状态。在 shell 里执行 `reboot -f`，约 13 秒后回到 Android。USB 在 10 分钟内一直没连上时，手机自动重启回 Android；内核 panic 后 30 秒也会重启。
+
+### 实现
+
+Realme 的 ABL 执行 `fastboot boot` 时，交给后续阶段的 ramdisk 是手机上 vendor_boot 和 init_boot 两个分区的 ramdisk（18.4 MB 加 3.2 MB），启动镜像自带的 ramdisk 会被丢弃。所以 Linux 载荷放在启动镜像的内核部分，紧跟在固件后面一起压缩，镜像头里的 image size 包含载荷。BootShim 把固件的加载地址和大小记在 `0xA7FFF000`，`LinuxRamBoot` 在 ramdisk 里找不到载荷时，就到"固件地址加固件大小"处读取。载荷格式是 `SUNUEFI-LINUXv2`：内核、initramfs 和设备树各带 SHA-256，校验不过就不启动，退回 Fastboot。
+
+`LinuxRamBoot` 通过 EFI stub 启动内核，命令行在 `uefi/platforms/pistaPkg/Applications/LinuxRamBoot/LinuxRamBootCommand.h`。g_serial 用 Linux 基金会的 ID（`1d6b:0104`）：它的默认 ID `0525:a4a7` 会被一些厂商工具的 Windows 驱动按 ID 认领，在测试用的电脑上就被一个签名无效的 UNISOC 驱动认领，串口出不来。
+
+pista 的 apps_smmu 有 132 组流匹配寄存器，piano 有不超过 128 组。内核接管 UEFI 留下的 SMMU 状态时，快照最多只放 128 组，pista 上 SMMU 驱动因此加载失败（`-95`），USB 控制器无法做 DMA。快照上限已改为 256，即 ID0.NUMSMRG 能表示的全部范围。
+
+Linux 现在只看到约 368 MB 内存：UEFI 交给内核的内存图只有它自己用的几块区域（`DXE_Heap` 等），手机其余的内存还没有报给内核。
+
 ## 原厂模块的加载顺序
 
 16 个原厂基础模块必须放进 FDF 的 `APRIORI DXE` 列表，并保持原厂 DXE APRIORI 列表中的相对顺序：
@@ -126,6 +178,8 @@ SmemDxe → DALSys → HWIODxeDriver → ChipInfo → PlatformInfoDxeDriver → 
 | USB | 只有 USB 2.0，USB3 PHY 在设备树中禁用 | Fastboot 以 High-Speed 工作，不需要 Type-C 正反面切换 |
 | 看门狗 | 固件挂死在断言里时约 90 秒后整机复位；Fastboot 空闲运行几分钟没有复位 | 挂死时手机会自己重启 |
 | 运行级别 | 固件运行在 EL1 | 与高通启动链一致，EL2 由虚拟机管理器占用 |
+| 启动镜像的 ramdisk | `fastboot boot` 时 ABL 改用 vendor_boot 和 init_boot 的 ramdisk | Linux 载荷放在启动镜像的内核部分 |
+| apps_smmu | 132 组流匹配寄存器 | 内核的 SMMU 接管快照上限从 128 改为 256 |
 
 ## 文件
 
@@ -137,3 +191,7 @@ SmemDxe → DALSys → HWIODxeDriver → ChipInfo → PlatformInfoDxeDriver → 
 | `tools/dev/extract_uefi_fv.py` | 从 `uefi` 分区提取 FV 里的 DXE 模块 |
 | `tools/dev/fdt_parse.py` | 读取设备树的辅助模块 |
 | `tools/dev/prepare_pista.py` | 生成平台文件和输入包 |
+| `tools/dev/package_pista_linux.py` | 把内核、initramfs 和设备树打成 Linux 载荷 |
+| `linux/configs/pista-ram.config` | 内存启动内核的 pista 配置 |
+| `linux/initramfs/pista-ram/init` | 内存启动的 initramfs：屏幕状态和 USB 串口 shell |
+| `uefi/platforms/pistaPkg/Applications/LinuxRamBoot/` | pista 的内核命令行；加载器本体在 `uefi/components/linux-loader/` |

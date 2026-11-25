@@ -1,0 +1,49 @@
+#!/bin/busybox sh
+# pista first RAM boot. The framebuffer console shows progress; the computer
+# gets a shell on the USB serial gadget (ttyGS0). No storage is mounted.
+/bin/busybox mkdir -p /proc /sys /dev /tmp /sbin /usr/bin /usr/sbin
+/bin/busybox --install -s
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+mount -t devtmpfs devtmpfs /dev
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t tmpfs -o mode=0755 tmpfs /tmp
+exec </dev/console >/dev/console 2>&1
+
+udc_state() {
+    for udc in /sys/class/udc/*; do
+        [ -r "$udc/state" ] && { cat "$udc/state"; return; }
+    done
+    echo "no controller"
+}
+
+echo
+echo "Linux $(uname -r) on $(tr -d '\000' </sys/firmware/devicetree/base/model)"
+echo "USB serial shell: open the new serial port on the computer (115200)."
+echo "Without a USB connection the phone restarts into Android after 10 minutes."
+
+# One shell at a time on ttyGS0, restarted when the computer closes it.
+(
+    while :; do
+        [ -c /dev/ttyGS0 ] && setsid -c sh -i </dev/ttyGS0 >/dev/ttyGS0 2>&1
+        sleep 1
+    done
+) &
+
+# A phone whose USB never came up has no other way back to Android.
+(
+    sleep 600
+    if [ "$(udc_state)" != configured ]; then
+        echo "USB was never connected; restarting into Android."
+        sync
+        reboot -f
+    fi
+) &
+
+last=
+while :; do
+    state=$(udc_state)
+    [ "$state" = "$last" ] || echo "USB: $state"
+    last=$state
+    sleep 5
+done

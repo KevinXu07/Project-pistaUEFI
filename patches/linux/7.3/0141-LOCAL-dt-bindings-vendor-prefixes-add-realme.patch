@@ -1,0 +1,26 @@
+From d56c8d63a08ef36701e58265f32666e978de9219 Mon Sep 17 00:00:00 2001
+From: KevinXu07 <im2evenx40702@qq.com>
+Date: Wed, 25 Nov 2026 17:54:22 +0800
+Subject: [PATCH] dt-bindings: vendor-prefixes: Add Realme
+
+Add a vendor prefix for Realme, a smartphone maker. The Realme GT7 Pro
+(RMX5010) uses it for its board compatible.
+
+Signed-off-by: KevinXu07 <im2evenx40702@qq.com>
+---
+ Documentation/devicetree/bindings/vendor-prefixes.yaml | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/vendor-prefixes.yaml b/Documentation/devicetree/bindings/vendor-prefixes.yaml
+index 1eab5c5f9..e675c498e 100644
+--- a/Documentation/devicetree/bindings/vendor-prefixes.yaml
++++ b/Documentation/devicetree/bindings/vendor-prefixes.yaml
+@@ -1411,6 +1411,8 @@ patternProperties:
+     description: Raystar Optronics, Inc.
+   "^rda,.*":
+     description: Unisoc Communications, Inc.
++  "^realme,.*":
++    description: Realme Chongqing Mobile Telecommunications Corp., Ltd.
+   "^realtek,.*":
+     description: Realtek Semiconductor Corp.
+   "^relfor,.*":

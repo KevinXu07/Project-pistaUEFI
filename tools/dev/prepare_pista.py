@@ -396,6 +396,14 @@ def install_ram_log_serial_port(library):
     (library / 'RamLogSerialPortLib.inf').write_text(inf)
 
 
+def install_linux_ram_boot(application):
+    """Copy the shared Linux RAM loader next to pista's LinuxRamBootCommand.h."""
+    loader = ROOT / 'uefi' / 'components' / 'linux-loader'
+    for name in ('LinuxRamBoot.c', 'LinuxRamBoot.inf', 'PianoEfiHandoffTrace.c', 'PianoEfiHandoffTrace.h'):
+        shutil.copyfile(loader / name, application / name)
+    shutil.copyfile(ROOT / 'uefi' / 'core' / 'boot' / 'PianoFaultRecovery.c', application / 'PianoFaultRecovery.c')
+
+
 def install_workspace(platform):
     """Copy pistaPkg and the Stage0 binaries into the fetched Mu-Silicium workspace."""
     workspace = ROOT / 'upstream' / 'Mu-Silicium'
@@ -408,6 +416,7 @@ def install_workspace(platform):
     shutil.copytree(platform, destination)
     install_fastboot_sources(destination / 'Library' / 'Stage0BootManagerLib')
     install_ram_log_serial_port(destination / 'Library' / 'RamLogSerialPortLib')
+    install_linux_ram_boot(destination / 'Applications' / 'LinuxRamBoot')
     index = extracted_index()
     stage0 = json.loads((platform / 'native-modules.json').read_text())
     binaries = workspace / 'Binaries' / 'pista' / 'Stage0'

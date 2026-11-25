@@ -99,3 +99,16 @@
   SerialPortLib|pistaPkg/Library/RamLogSerialPortLib/RamLogSerialPortLib.inf
 [Components]
   pistaPkg/Drivers/CapsuleArchNullDxe/CapsuleArchNullDxe.inf
+  # Boots the Linux payload that ABL loaded as the boot image ramdisk. It
+  # checks the payload's SHA-256 hashes, so it links the OpenSSL crypto
+  # library instead of the null one used without secure boot. The loader
+  # sources are copied into the workspace by tools/dev/prepare_pista.py.
+  pistaPkg/Applications/LinuxRamBoot/LinuxRamBoot.inf {
+    <LibraryClasses>
+      BaseCryptLib|OpensslPkg/Library/BaseCryptLib/BaseCryptLib.inf
+      OpensslLib|OpensslPkg/Library/OpensslLib/OpensslLib.inf
+      IntrinsicLib|CryptoPkg/Library/IntrinsicLib/IntrinsicLib.inf
+      # SHA-256 needs no random numbers, and this firmware has no RNG protocol
+      # (DxeRngLib asserts in its constructor without one).
+      RngLib|MdePkg/Library/BaseRngLibNull/BaseRngLibNull.inf
+  }

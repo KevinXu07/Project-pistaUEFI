@@ -1,0 +1,315 @@
+From 44daf47456facc194aaa772783dd7fbb607b8ceb Mon Sep 17 00:00:00 2001
+From: KevinXu07 <im2evenx40702@qq.com>
+Date: Wed, 25 Nov 2026 17:54:22 +0800
+Subject: [PATCH] arm64: dts: qcom: Add Realme GT7 Pro
+
+Add a first device tree for the Realme GT7 Pro (pista, RMX5010), an
+SM8750 smartphone. It enables the USB 2.0 peripheral path: the DWC3
+controller, the M31 eUSB2 PHY and the PMIH0108 repeater, with the RPMh
+rails they use. The display is the framebuffer left by the boot firmware.
+
+Every regulator matches the stock RMX5010 device tree (realme UI
+16.0.7.201) in name and voltage range. The stock tree disables the USB3
+PHY and limits the controller to high speed, so only the USB2 PHY is
+listed. The same reserved GPIOs as the stock tree are kept.
+
+Tested by booting from RAM through UEFI: the kernel reaches userspace and
+a USB serial gadget enumerates at high speed on a Windows host.
+
+Signed-off-by: KevinXu07 <im2evenx40702@qq.com>
+---
+ arch/arm64/boot/dts/qcom/Makefile             |   1 +
+ .../boot/dts/qcom/sm8750-realme-pista.dts     | 272 ++++++++++++++++++
+ 2 files changed, 273 insertions(+)
+ create mode 100755 arch/arm64/boot/dts/qcom/sm8750-realme-pista.dts
+
+diff --git a/arch/arm64/boot/dts/qcom/Makefile b/arch/arm64/boot/dts/qcom/Makefile
+index 622341b32..c0e88584e 100644
+--- a/arch/arm64/boot/dts/qcom/Makefile
++++ b/arch/arm64/boot/dts/qcom/Makefile
+@@ -408,6 +408,7 @@ dtb-$(CONFIG_ARCH_QCOM)	+= sm8650-mtp.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8650-qrd.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8750-mtp.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8750-qrd.dtb
++dtb-$(CONFIG_ARCH_QCOM)	+= sm8750-realme-pista.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8750-xiaomi-piano.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= talos-evk.dtb
+ 
+diff --git a/arch/arm64/boot/dts/qcom/sm8750-realme-pista.dts b/arch/arm64/boot/dts/qcom/sm8750-realme-pista.dts
+new file mode 100755
+index 000000000..1c4268ee3
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm8750-realme-pista.dts
+@@ -0,0 +1,272 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * Realme GT7 Pro (pista, RMX5010) first RAM boot.
++ *
++ * Scope: the UEFI framebuffer (passed by the EFI stub, no DT node needed)
++ * and the USB 2.0 controller as a serial gadget. Storage, display, audio,
++ * wireless, charging and the remote processors stay disabled.
++ *
++ * Every regulator below matches the stock RMX5010 device tree (realme UI
++ * 16.0.7.201 OTA) in name and voltage range. pista's USB3 PHY is disabled
++ * in that tree, so the controller runs at high speed through the eUSB2 PHY
++ * and the PMIH0108 repeater only. The rest follows sm8750-xiaomi-piano.dts,
++ * which uses the same SoC and the same rails for these blocks.
++ */
++
++/dts-v1/;
++
++#include <dt-bindings/gpio/gpio.h>
++#include <dt-bindings/regulator/qcom,rpmh-regulator.h>
++#include "sm8750.dtsi"
++#include "pmih0108.dtsi"
++
++/ {
++	model = "Realme GT7 Pro";
++	compatible = "realme,pista", "qcom,sm8750";
++	chassis-type = "handset";
++
++	chosen {
++	};
++
++	clocks {
++		xo_board: xo-board {
++			compatible = "fixed-clock";
++			clock-frequency = <76800000>;
++			#clock-cells = <0>;
++		};
++
++		sleep_clk: sleep-clk {
++			compatible = "fixed-clock";
++			clock-frequency = <32000>;
++			#clock-cells = <0>;
++		};
++
++		bi_tcxo_div2: bi-tcxo-div2-clk {
++			compatible = "fixed-factor-clock";
++			#clock-cells = <0>;
++
++			clocks = <&rpmhcc RPMH_CXO_CLK>;
++			clock-mult = <1>;
++			clock-div = <2>;
++		};
++
++		bi_tcxo_ao_div2: bi-tcxo-ao-div2-clk {
++			compatible = "fixed-factor-clock";
++			#clock-cells = <0>;
++
++			clocks = <&rpmhcc RPMH_CXO_CLK_A>;
++			clock-mult = <1>;
++			clock-div = <2>;
++		};
++	};
++
++	vph_pwr: vph-pwr-regulator {
++		compatible = "regulator-fixed";
++
++		regulator-name = "vph_pwr";
++		regulator-min-microvolt = <3700000>;
++		regulator-max-microvolt = <3700000>;
++
++		regulator-always-on;
++		regulator-boot-on;
++	};
++};
++
++&apps_rsc {
++	regulators-0 {
++		compatible = "qcom,pm8550-rpmh-regulators";
++
++		vdd-bob1-supply = <&vph_pwr>;
++		vdd-bob2-supply = <&vph_pwr>;
++		vdd-l5-l16-supply = <&vreg_bob1>;
++		vdd-l15-supply = <&vreg_s3g_1p8>;
++		vdd-l17-supply = <&vreg_bob2>;
++
++		qcom,pmic-id = "b";
++
++		vreg_bob1: bob1 {
++			regulator-name = "vreg_bob1";
++			regulator-min-microvolt = <3008000>;
++			regulator-max-microvolt = <4000000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		vreg_bob2: bob2 {
++			regulator-name = "vreg_bob2";
++			regulator-min-microvolt = <2704000>;
++			regulator-max-microvolt = <3008000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		/* eUSB2 repeater */
++		vreg_l5b_3p1: ldo5 {
++			regulator-name = "vreg_l5b_3p1";
++			regulator-min-microvolt = <3100000>;
++			regulator-max-microvolt = <3148000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++			regulator-allow-set-load;
++			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
++						   RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		/* eUSB2 repeater */
++		vreg_l15b_1p8: ldo15 {
++			regulator-name = "vreg_l15b_1p8";
++			regulator-min-microvolt = <1800000>;
++			regulator-max-microvolt = <1800000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++			regulator-allow-set-load;
++			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
++						   RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		/* UFS VCC, for the storage stage */
++		vreg_l17b_2p5: ldo17 {
++			regulator-name = "vreg_l17b_2p5";
++			regulator-min-microvolt = <2504000>;
++			regulator-max-microvolt = <2504000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++			regulator-allow-set-load;
++			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
++						   RPMH_REGULATOR_MODE_HPM>;
++		};
++	};
++
++	regulators-1 {
++		compatible = "qcom,pm8550ve-rpmh-regulators";
++
++		vdd-l1-supply = <&vreg_s7i_1p2>;
++		vdd-l2-supply = <&vreg_s1d_0p97>;
++		vdd-s1-supply = <&vph_pwr>;
++
++		qcom,pmic-id = "d";
++
++		vreg_s1d_0p97: smps1 {
++			regulator-name = "vreg_s1d_0p97";
++			regulator-min-microvolt = <880000>;
++			regulator-max-microvolt = <1100000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		/* UFS VCCQ, for the storage stage */
++		vreg_l1d_1p2: ldo1 {
++			regulator-name = "vreg_l1d_1p2";
++			regulator-min-microvolt = <1200000>;
++			regulator-max-microvolt = <1200000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++			regulator-allow-set-load;
++			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
++						   RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		/* eUSB2 PHY */
++		vreg_l2d_0p88: ldo2 {
++			regulator-name = "vreg_l2d_0p88";
++			regulator-min-microvolt = <880000>;
++			regulator-max-microvolt = <912000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++			regulator-allow-set-load;
++			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
++						   RPMH_REGULATOR_MODE_HPM>;
++		};
++	};
++
++	regulators-3 {
++		compatible = "qcom,pm8550ve-rpmh-regulators";
++
++		vdd-l3-supply = <&vreg_s7i_1p2>;
++		vdd-s3-supply = <&vph_pwr>;
++
++		qcom,pmic-id = "g";
++
++		vreg_s3g_1p8: smps3 {
++			regulator-name = "vreg_s3g_1p8";
++			regulator-min-microvolt = <1856000>;
++			regulator-max-microvolt = <2000000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_LPM>;
++			regulator-allow-set-load;
++			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
++						   RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		/* eUSB2 PHY and UFS PHY */
++		vreg_l3g_1p2: ldo3 {
++			regulator-name = "vreg_l3g_1p2";
++			regulator-min-microvolt = <1200000>;
++			regulator-max-microvolt = <1256000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++			regulator-allow-set-load;
++			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
++						   RPMH_REGULATOR_MODE_HPM>;
++		};
++	};
++
++	regulators-4 {
++		compatible = "qcom,pm8550ve-rpmh-regulators";
++
++		vdd-s7-supply = <&vph_pwr>;
++
++		qcom,pmic-id = "i";
++
++		vreg_s7i_1p2: smps7 {
++			regulator-name = "vreg_s7i_1p2";
++			regulator-min-microvolt = <1224000>;
++			regulator-max-microvolt = <1340000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++	};
++
++	regulators-5 {
++		compatible = "qcom,pm8550vs-rpmh-regulators";
++
++		vdd-l1-supply = <&vreg_s1d_0p97>;
++
++		qcom,pmic-id = "j";
++
++		/* UFS PHY, for the storage stage */
++		vreg_l1j_0p91: ldo1 {
++			regulator-name = "vreg_l1j_0p91";
++			regulator-min-microvolt = <880000>;
++			regulator-max-microvolt = <920000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++			regulator-allow-set-load;
++			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
++						   RPMH_REGULATOR_MODE_HPM>;
++		};
++	};
++};
++
++&pmih0108_eusb2_repeater {
++	qcom,tune-usb2-preem = /bits/ 8 <0x3>;
++	qcom,tune-usb2-amplitude = /bits/ 8 <0xa>;
++	qcom,squelch-detector-bp = <(-2000)>;
++
++	vdd18-supply = <&vreg_l15b_1p8>;
++	vdd3-supply = <&vreg_l5b_3p1>;
++
++	status = "okay";
++};
++
++/* Secure-world GPIOs; the stock tree lists the same qcom,gpios-reserved. */
++&tlmm {
++	gpio-reserved-ranges = <36 4>, <74 1>;
++};
++
++&usb {
++	dr_mode = "peripheral";
++	maximum-speed = "high-speed";
++	phys = <&usb_hsphy>;
++	phy-names = "usb2-phy";
++	/delete-property/ usb-role-switch;
++
++	status = "okay";
++};
++
++&usb_hsphy {
++	vdd-supply = <&vreg_l2d_0p88>;
++	vdda12-supply = <&vreg_l3g_1p2>;
++
++	phys = <&pmih0108_eusb2_repeater>;
++
++	status = "okay";
++};

@@ -18,7 +18,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--profile', choices=('stage0', 'probe', 'linux', 'gui', 'pista'), default='stage0')
     ap.add_argument('--header-version', type=int, choices=(3,4), default=4)
+    ap.add_argument('--linux-payload', type=Path,
+                    help='pista: Linux payload from package_pista_linux.py, placed after the FD in the kernel image')
     args = ap.parse_args()
+    if args.linux_payload is not None and args.profile != 'pista':
+        ap.error('--linux-payload is only for the pista profile')
     root = Path(__file__).resolve().parent.parent.parent
     ws = root / 'upstream/Mu-Silicium'
     out = root / 'artifacts' / args.profile
@@ -32,7 +36,7 @@ def main():
     dtb = (ws / 'Resources/DTBs'/f'{name}.dtb').read_bytes()
     if len(fd) != 0x300000 or shim[56:60] != b'ARM\x64':
         raise SystemExit('Unexpected FD/BootShim header')
-    elf = ws / 'BootShim/BootShim.elf' if args.profile in ('stage0','pista') else root / 'uefi/handoff/bootshim/BootShim.elf'
+    elf = ws / 'BootShim/BootShim.elf' if args.profile == 'stage0' else root / 'uefi/handoff/bootshim/BootShim.elf'
     nm = Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT', root / 'build/host-tools/usr')) / 'bin/aarch64-linux-gnu-nm'
     symbols = subprocess.check_output([str(nm), '-n', str(elf)], text=True)
     payload_offsets = [int(line.split()[0], 16) for line in symbols.splitlines()
@@ -48,9 +52,20 @@ def main():
     nodes = parse_fdt(dtb)
     if any(k in nodes.get('/chosen', {}) for k in ('linux,initrd-start','linux,initrd-end','kaslr-seed','rng-seed')):
         raise SystemExit('Stale boot handoff pointers/seeds in DTB')
-    kernel = gzip.compress(shim + fd, mtime=0) + dtb
+    # pista's ABL passes the vendor_boot and init_boot ramdisks, never this
+    # image's own, so the Linux payload travels in the kernel image right
+    # after the FD; LinuxRamBoot finds it from the BootShim record. The
+    # header's image size covers it so ABL places nothing on top of it.
+    linux_payload_bytes = b''
+    if args.linux_payload is not None:
+        linux_payload_bytes = args.linux_payload.read_bytes()
+        if linux_payload_bytes[:16] != b'SUNUEFI-LINUXv2\0':
+            raise SystemExit('Not a SUNUEFI-LINUXv2 payload')
+        image_size = -(-(len(shim) + len(fd) + len(linux_payload_bytes)) // 0x200000) * 0x200000
+        shim = shim[:16] + struct.pack('<Q', image_size) + shim[24:]
+    kernel = gzip.compress(shim + fd + linux_payload_bytes, mtime=0) + dtb
     (out / f'{name}-stage0-kernel.bin').write_bytes(kernel)
-    image = out / f'{name}-stage0-UNTESTED.img'
+    image = out / (f'{name}-linux.img' if args.linux_payload is not None else f'{name}-stage0-UNTESTED.img')
     ramdisk = (root / 'artifacts/linux-ram/linux-payload.bin' if args.profile == 'linux' else
                root / 'artifacts/simpleinit/app-payload.bin' if args.profile == 'gui' else ws / 'Resources/ramdisk')
     subprocess.run([sys.executable, str(ws / 'Resources/Scripts/mkbootimg.py'),

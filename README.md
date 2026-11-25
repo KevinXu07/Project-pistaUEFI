@@ -5,7 +5,7 @@
 
 把 [SunUEFI](https://github.com/slwyts/Project-SunUEFI) 的 EDK2 UEFI 移植到 Realme GT7 Pro（代号 `pista`，型号 RMX5010，骁龙 8 至尊版 SM8750-AB）。SunUEFI 已经让小米平板 8 Pro 在保留 Android 的同时启动主线 Linux；这里的目标是让 GT7 Pro 也能做到同样的事，并跟进 SunUEFI 社区在 Windows on ARM 上的进展。
 
-目前完成的是诊断固件：用 `fastboot boot` 临时启动后，UEFI 能在手机上运行到启动管理阶段，沿用 ABL 点亮的屏幕，原厂的 16 个基础驱动全部正常工作，电脑可以通过 UEFI Fastboot 导出固件日志、截图、查询状态、只读导出分区和重启手机。它还不能启动 Linux 或 Windows，也不会写入手机上的存储。
+目前完成的是诊断固件：用 `fastboot boot` 临时启动后，UEFI 能在手机上运行到启动管理阶段，沿用 ABL 点亮的屏幕，原厂的 16 个基础驱动全部正常工作，电脑可以通过 UEFI Fastboot 导出固件日志、截图、查询状态、只读导出分区和重启手机。它还能从内存启动主线 Linux 内核，进到一个可以通过 USB 串口操作的最小系统；完整的 Linux 发行版和 Windows 还不能启动。它不会写入手机上的存储。
 
 ## 现状
 
@@ -17,7 +17,7 @@
 | TrustZone 相关驱动 | ❌ | 临时启动时初始化失败，诊断固件暂不携带；原厂的存储、变量保存和显示驱动需要它们，SunUEFI 自己的 USB 和存储驱动不需要 |
 | UEFI Fastboot | ✅ | USB 2.0，可导出固件日志、截图、查询状态、重启 |
 | 内部存储 | ✅ 只读 | 用 SunUEFI 自己的 UFS 驱动，`fastboot fetch` 能按分区名导出，不能写入 |
-| Linux | ❌ | 设备树和驱动还没开始适配 |
+| Linux | 🚧 | 主线 7.3.3 内核从内存启动，电脑通过 USB 串口得到 shell；只看到约 368 MB 内存，屏幕沿用固件的帧缓冲，存储、触控、电池、无线都还没适配 |
 | 开机选择 Android 或 UEFI | ❌ | 需要先摸清 Realme ABL 的行为 |
 | Windows on ARM | ❌ | SunUEFI 在小米平板 8 Pro 上也还没有启动 |
 

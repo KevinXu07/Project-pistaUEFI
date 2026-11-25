@@ -46,7 +46,7 @@ Stop unfinished pen negotiations before system suspend; retry once resumed.
  arch/arm64/kernel/cpuinfo.c                   |   18 +-
  drivers/clk/qcom/gcc-sm8750.c                 |    2 +
  drivers/i2c/busses/i2c-qcom-cci.c             |    9 +-
- .../arm/arm-smmu/arm-smmu-qcom-handoff.h      |  103 +
+ .../arm/arm-smmu/arm-smmu-qcom-handoff.h      |  104 +
  drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c    |  190 +-
  drivers/iommu/arm/arm-smmu/arm-smmu.c         |  315 ++-
  drivers/iommu/arm/arm-smmu/arm-smmu.h         |    5 +
@@ -83,7 +83,7 @@ Stop unfinished pen negotiations before system suspend; retry once resumed.
  include/linux/pwrseq/qcom_wcn.h               |   36 +
  include/uapi/linux/nanosic_hinge.h            |   28 +
  .../selftests/iommu/qcom-handoff-snapshot.c   |  108 +
- 69 files changed, 11513 insertions(+), 249 deletions(-)
+ 69 files changed, 11514 insertions(+), 249 deletions(-)
  create mode 100644 .github/workflows/piano-dtb.yml
  create mode 100644 Documentation/ABI/testing/procfs-nvt-thp-control
  create mode 100644 Documentation/ABI/testing/sysfs-devices-piano-dma-route
@@ -6171,10 +6171,10 @@ index bd70c6bae5dc685435bf2ad031cf7a11ec60ab4f..d55806c89c06a4a65b0f8c3eba3b4928
  	/* Memory */
 diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom-handoff.h b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom-handoff.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..470fd9fb638fdd6518e08388ddb0684ea6c3c8cd
+index 0000000000000000000000000000000000000000..66a4a0818421e991a11a384eab9a598de04981de
 --- /dev/null
 +++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom-handoff.h
-@@ -0,0 +1,103 @@
+@@ -0,0 +1,104 @@
 +/* SPDX-License-Identifier: GPL-2.0-only */
 +#ifndef ARM_SMMU_QCOM_HANDOFF_H
 +#define ARM_SMMU_QCOM_HANDOFF_H
@@ -6189,7 +6189,8 @@ index 0000000000000000000000000000000000000000..470fd9fb638fdd6518e08388ddb0684e
 +typedef uint64_t u64;
 +#endif
 +
-+#define QCOM_HANDOFF_MAX_SMR 128
++/* ID0.NUMSMRG is eight bits wide; the pista apps_smmu reports 132. */
++#define QCOM_HANDOFF_MAX_SMR 256
 +#define QCOM_HANDOFF_MAX_CB 256
 +#define QCOM_HANDOFF_SMR_VALID (1U << 31)
 +#define QCOM_HANDOFF_SCTLR_M 1U

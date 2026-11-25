@@ -119,5 +119,6 @@ READ_STATUS = TRUE
   INF MdeModulePkg/Universal/Disk/DiskIoDxe/DiskIoDxe.inf
   INF MdeModulePkg/Universal/Disk/PartitionDxe/PartitionDxe.inf
   INF MdeModulePkg/Universal/BdsDxe/BdsDxe.inf
+  INF pistaPkg/Applications/LinuxRamBoot/LinuxRamBoot.inf
 
 !include SiliciumPkg/Common.fdf.inc

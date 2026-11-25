@@ -13,6 +13,7 @@
 #include <Protocol/FirmwareVolume2.h>
 #include <Library/TimerLib.h>
 #include <Library/BaseMemoryLib.h>
+#include <Library/DxeServicesLib.h>
 #include "NativeModules.h"
 #include "PistaDeviceTree.h"
 #include "PianoUsbService.h"
@@ -220,6 +221,40 @@ STATIC BOOLEAN StopStorage (BOOLEAN UsbRan)
   return FALSE;
 }
 
+// LinuxRamBoot.inf, an application in this firmware volume.
+STATIC CONST EFI_GUID mLinuxRamBootFile = {
+  0x9EAD13AC, 0xA4EC, 0x47D4, { 0xB9, 0x9E, 0x2D, 0x17, 0x97, 0x9D, 0xC8, 0xEF }
+};
+
+// Starts the Linux payload carried after the firmware in the boot image's
+// kernel (see tools/dev/package_pista_linux.py). Returns when the boot image
+// carries no payload or the kernel could not be started; Fastboot runs next.
+STATIC VOID RunLinuxRamBoot (VOID)
+{
+  VOID       *Image = NULL;
+  UINTN      Size   = 0;
+  EFI_HANDLE Handle = NULL;
+  EFI_STATUS Status;
+
+  Status = GetSectionFromAnyFv (&mLinuxRamBootFile, EFI_SECTION_PE32, 0, &Image, &Size);
+  if (EFI_ERROR (Status)) {
+    Print (L"Linux loader is missing from this firmware (%r).\r\n", Status);
+    return;
+  }
+  Status = gBS->LoadImage (FALSE, gImageHandle, NULL, Image, Size, &Handle);
+  FreePool (Image);
+  if (EFI_ERROR (Status)) {
+    Print (L"Linux loader could not be loaded (%r).\r\n", Status);
+    return;
+  }
+  Status = gBS->StartImage (Handle, NULL, NULL);
+  if (Status == EFI_NOT_FOUND) {
+    Print (L"No Linux payload in this boot image.\r\n");
+  } else {
+    Print (L"Linux did not start (%r). Starting Fastboot instead.\r\n", Status);
+  }
+}
+
 // Runs the resident USB Fastboot service. Returns when the service cannot
 // start or the host sends "continue"; "reboot" stops the service and UFS,
 // releases their DMA and SMMU resources, then cold resets.
@@ -302,6 +337,8 @@ EFI_DEVICE_PATH_PROTOCOL **EFIAPI DeviceBootManagerAfterConsole (VOID)
   // the detailed UFS, USB and SMMU traces go to "fastboot oem ramlog".
   Print (L"Detailed log: \"fastboot oem ramlog\".\r\n");
   PistaRamLogSetScreenCopy (FALSE);
+  // Before Fastboot: Linux must start while USB and UFS are still untouched.
+  RunLinuxRamBoot ();
   RunFastboot ();
   // Reached only when Fastboot could not start or the host sent "continue".
   // This cannot recover a hang that happens before the console callback.
