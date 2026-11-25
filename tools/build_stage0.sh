@@ -7,7 +7,7 @@ sun_tools="${SUNUEFI_TOOLCHAIN_ROOT:-$sun_root/build/host-tools/usr}"
 sun_profile="${1:-stage0}"
 case "$sun_profile" in
   stage0) sun_name=piano; sun_oem=Xiaomi; sun_bootshim="$sun_ws/BootShim" ;;
-  pista) sun_name=pista; sun_oem=Realme; sun_bootshim="$sun_ws/BootShim" ;;
+  pista) sun_name=pista; sun_oem=Realme; sun_bootshim="$sun_root/uefi/handoff/bootshim" ;;
   probe) sun_name=pianoProbe; sun_oem=Xiaomi; sun_bootshim="$sun_root/uefi/handoff/bootshim" ;;
   linux) sun_name=pianoLinux; sun_oem=Xiaomi; sun_bootshim="$sun_root/uefi/handoff/bootshim" ;;
   gui) sun_name=pianoGui; sun_oem=Xiaomi; sun_bootshim="$sun_root/uefi/handoff/bootshim" ;;
@@ -24,6 +24,10 @@ elif [[ "$sun_profile" == product ]]; then
   sun_buildid=SunUEFI-piano-product
 fi
 rm -f "$sun_root/artifacts/$sun_profile/build-ok.json"
+# build.py -n runs modules in parallel but each module's make is serial, so a
+# large module such as OpensslLib compiled on one core. GNU make reads -j from
+# MAKEFLAGS; with -n 8 this allows at most 64 compilers at once.
+export MAKEFLAGS="${MAKEFLAGS:--j8}"
 export PATH="$sun_root/.venv/bin:$sun_tools/bin:$PATH"
 export LD_LIBRARY_PATH="$sun_tools/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export CLANG_BIN="$sun_tools/bin/"
