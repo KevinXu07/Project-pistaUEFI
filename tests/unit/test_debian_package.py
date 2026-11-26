@@ -1,7 +1,9 @@
 """Check Debian source identity and package-cache ABI boundaries."""
 import copy
+from io import StringIO
 import json
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -13,12 +15,22 @@ from desktop import debian_package
 
 
 class DebianPackageTests(unittest.TestCase):
+    def test_binary_revision_keeps_newer_debian_rebuilds_installable(self):
+        target = {'binary': {'source_version': '4:6.7.4-2', 'version': '4:6.7.4-2+b1'}}
+        version = debian_package.package_version_for(target, 1, keep_binary_revision=True)
+        subprocess.run(['dpkg', '--compare-versions', version, 'gt', '4:6.7.4-2+b1'], check=True)
+        subprocess.run(['dpkg', '--compare-versions', version, 'lt', '4:6.7.4-2+b2'], check=True)
+        subprocess.run(['dpkg', '--compare-versions', version, 'lt', '4:6.8.4-1'], check=True)
+
     def test_build_dependency_retry_requires_only_https_connection_resets(self):
         reset = ('E: Failed to fetch https://deb.debian.org/debian/pool/dh-python.deb  OpenSSL system '
                  'call error: error:80000068:system library::Connection reset by peer  - openssl '
                  '(104: Connection reset by peer) [IP: 192.0.2.1 443]')
         summary = '\nE: Some files failed to download\nE: Failed to process build dependencies\n'
         self.assertEqual(debian_package.dependency_download_resets(reset + summary),
+                         {'https://deb.debian.org/debian/pool/dh-python.deb'})
+        install_summary = '\nE: Unable to fetch some archives, maybe run apt update or try with --fix-missing?\n'
+        self.assertEqual(debian_package.dependency_download_resets(reset + install_summary),
                          {'https://deb.debian.org/debian/pool/dh-python.deb'})
         for error in (
             summary,
@@ -31,36 +43,62 @@ class DebianPackageTests(unittest.TestCase):
             with self.subTest(error=error):
                 self.assertFalse(debian_package.dependency_download_resets(error))
 
+    def test_interrupted_dependency_install_retries_only_the_download(self):
+        uri = 'https://deb.debian.org/debian/pool/sensible-utils_0.0.26_all.deb'
+        name = 'sensible-utils_0.0.26_all.deb'
+        commands = []
+
+        def apt(root, args, **kwargs):
+            commands.append(args[-1])
+            archive = root / args[2].split('=', 1)[1].lstrip('/') / 'partial' / name
+            if len(commands) == 1:
+                archive.parent.mkdir()
+                archive.write_bytes(b'interrupted')
+                kwargs['stdout'].write(
+                    f'E: Failed to fetch {uri}  OpenSSL system call error: error:00000000:lib(0)::reason(0)'
+                    '  - openssl (104: Connection reset by peer) [IP: 192.0.2.1 443]\n'
+                    'E: Unable to fetch some archives, maybe run apt update or try with --fix-missing?\n')
+                raise subprocess.CalledProcessError(100, args)
+            if args[-1] == '--print-uris':
+                return subprocess.CompletedProcess(args, 0, stdout=f"'{uri}' {name} 27000 SHA256:digest\n")
+            self.assertFalse(archive.exists())
+
+        with tempfile.TemporaryDirectory() as temporary, patch.object(debian_package, 'chroot', side_effect=apt):
+            root = Path(temporary)
+            (root / 'var/cache/apt').mkdir(parents=True)
+            debian_package.install_apt_dependencies(root, ['install', 'build-essential'], StringIO())
+        self.assertEqual(commands, ['--download-only', '--print-uris', '--download-only', '--no-download'])
+
     def test_mesa_local_revision_is_bound_to_config_and_built_output(self):
+        from build import mesa
+
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            config = root / 'config/mesa.json'
-            producer = root / 'tools/build/mesa.py'
             output = root / 'build/mesa/SOURCE.json'
-            for path in (config, producer, output):
-                path.parent.mkdir(parents=True, exist_ok=True)
-            policy = {'source': {'repository': 'https://gitlab.freedesktop.org/mesa/mesa.git',
-                                 'commit': 'a' * 40, 'version': '27.0.0-devel', 'sha256': 'b' * 64},
-                      'debian': {'recipe_source_version': '26.2.6-1',
-                                 'package_version': '27.0.0~devel+git123-1'}}
-            config.write_text(json.dumps(policy))
-            producer.write_text('Mesa package builder')
-            record = {'official_source': policy['source'], 'source': {'version': '26.2.6-1'},
-                      'patches': [], 'config_sha256': debian_package.sha(config),
-                      'producer_sha256': debian_package.sha(producer)}
+            output.parent.mkdir(parents=True)
+            policy = mesa.policy()
+            version = policy['debian']['recipe']['version']
+            patches = mesa.patch_proof()
+            record = {'official_source': policy['source'], 'source': mesa.packaging_origin(),
+                      'patches': patches, 'source_patch_series': mesa.quilt_series(patches),
+                      'config_sha256': debian_package.sha(mesa.CONFIG),
+                      'producer_sha256': debian_package.sha(mesa.__file__)}
             output.write_text(json.dumps(record))
-            official = {'Package': 'libgbm1', 'Source': 'mesa', 'Version': '26.2.6-1'}
+            official = {'Package': 'libgbm1', 'Source': 'mesa', 'Version': version}
             installed = {'version': policy['debian']['package_version'], 'source': 'mesa',
                          'source_version': policy['debian']['package_version'], 'architecture': 'arm64'}
             with patch.object(debian_package, 'ROOT', root):
                 self.assertEqual(debian_package.local_package_spec('libgbm1', installed, official),
-                                 (root / 'build/mesa', []))
+                                 (root / 'build/mesa', patches))
                 with self.assertRaisesRegex(ValueError, 'declared local revision'):
                     debian_package.local_package_spec('libgbm1', {**installed, 'version': '99+piano1'}, official)
-                record['official_source'] = {'version': 'different'}
-                output.write_text(json.dumps(record))
-                with self.assertRaisesRegex(ValueError, 'provenance'):
-                    debian_package.local_package_spec('libgbm1', installed, official)
+                for change in ({'official_source': {'version': 'different'}}, {'patches': []},
+                               {'source_patch_series': []},
+                               {'source': {**record['source'], 'archives': []}},
+                               {'patches': [{**row, 'sha256': 'bad-digest'} for row in patches]}):
+                    with self.subTest(change=change), self.assertRaisesRegex(ValueError, 'provenance'):
+                        output.write_text(json.dumps({**record, **change}))
+                        debian_package.local_package_spec('libgbm1', installed, official)
 
     def test_local_revision_needs_declared_package_source_and_exact_version(self):
         official = {'Package': 'gdm3', 'Source': 'gdm3 (51.1-1)', 'Version': '51.1-1+b1'}
@@ -81,8 +119,8 @@ class DebianPackageTests(unittest.TestCase):
         from desktop import build_pipewire_packages
 
         name = debian_package.PIPEWIRE_ABI_PACKAGE
-        official = {'Package': name, 'Source': 'pipewire', 'Version': '1.6.9-2'}
-        version = '1.6.9-2+sunuefi' + str(build_pipewire_packages.DEBIAN_REVISION)
+        official = {'Package': name, 'Source': 'pipewire', 'Version': '1.6.11-2'}
+        version = '1.6.11-2+sunuefi' + str(build_pipewire_packages.DEBIAN_REVISION)
         installed = {'version': version, 'source': 'pipewire',
                      'source_version': version, 'architecture': 'arm64'}
         output = ROOT / 'build/packages/pipewire'
@@ -92,7 +130,7 @@ class DebianPackageTests(unittest.TestCase):
         self.assertIn('patches/pipewire/1.6.9/0009-client-node-empty-params.patch',
                       {row['path'] for row in patches})
         with self.assertRaisesRegex(ValueError, 'declared local revision'):
-            debian_package.local_package_spec(name, {**installed, 'version': '1.6.9-2+unknown'}, official)
+            debian_package.local_package_spec(name, {**installed, 'version': '1.6.11-2+unknown'}, official)
 
     def test_gbm_cache_comparison_preserves_actual_local_identity(self):
         baseline = {'package': 'libgbm1', 'version': '26.2.6-1', 'source': 'mesa',

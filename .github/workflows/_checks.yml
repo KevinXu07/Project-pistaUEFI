@@ -1,0 +1,68 @@
+name: Host checks
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    env:
+      SUNUEFI_TOOLCHAIN_ROOT: /usr
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install native test dependencies
+        run: |
+          # The runner already ships Cargo and Rust. Do not download a second toolchain.
+          cargo --version
+          packages=(alsa-utils binutils-aarch64-linux-gnu build-essential clang
+            debhelper libarchive-tools libjpeg-dev libssl-dev libyuv-dev m4
+            makepkg pacman-package-manager systemd-boot-efi systemd-boot-tools
+            systemd-ukify zstd)
+          apt_options=(-o Acquire::Retries=2 -o Acquire::http::Timeout=20
+            -o Acquire::https::Timeout=20 -o Acquire::Languages=none)
+          apt_sources=()
+          download_dependencies() {
+            local -a apt=(apt-get "${apt_options[@]}" "${apt_sources[@]}")
+            sudo timeout --kill-after=10s 3m "${apt[@]}" -o APT::Update::Error-Mode=any update &&
+              sudo timeout --kill-after=10s 4m "${apt[@]}" install -y --download-only \
+                --no-install-recommends "${packages[@]}"
+          }
+          if ! download_dependencies; then
+            echo "::warning::The runner's Ubuntu mirror did not finish; retrying on the official archive."
+            . /etc/os-release
+            archive_sources="$RUNNER_TEMP/sunuefi-ubuntu.sources"
+            printf 'Types: deb\nURIs: https://archive.ubuntu.com/ubuntu\nSuites: %s %s-updates\nComponents: main universe\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n\nTypes: deb\nURIs: https://security.ubuntu.com/ubuntu\nSuites: %s-security\nComponents: main universe\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n' \
+              "$VERSION_CODENAME" "$VERSION_CODENAME" "$VERSION_CODENAME" > "$archive_sources"
+            apt_sources=(-o "Dir::Etc::sourcelist=$archive_sources" -o Dir::Etc::sourceparts=-)
+            download_dependencies
+          fi
+          sudo apt-get "${apt_options[@]}" "${apt_sources[@]}" install -y --no-download \
+            --no-install-recommends "${packages[@]}"
+      - name: Check out fixed test sources
+        run: |
+          git submodule update --init --depth 1 -- upstream/Mu-Silicium \
+            upstream/debian-piano-current upstream/audioreach-topology
+          git -C upstream/Mu-Silicium submodule update --init --depth 1 -- Mu_Basecore
+          git -C upstream/Mu-Silicium/Mu_Basecore submodule update --init --depth 1 \
+            -- MdePkg/Library/BaseFdtLib/libfdt
+      - name: Prepare the fixed camera test dependency
+        run: |
+          mkdir -p build
+          PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=tools python3 - <<'PY'
+          import os
+          from pathlib import Path
+          from tempfile import TemporaryDirectory
+          from build_piano_runtime_helpers import prepare_camera_quad
+
+          with TemporaryDirectory() as temporary:
+              work = Path(temporary)
+              (work / 'quad').mkdir()
+              prepare_camera_quad(work, work, os.environ.copy())
+          PY
+      - run: ./build.sh check --group ci

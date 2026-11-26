@@ -16,7 +16,9 @@ Proton/FEX 的兼容性仍按游戏区分，不能据此认为所有 Windows 游
 
 ## 下载与安装
 
-在 GitHub Actions 的 **Build products → Run workflow** 中选择 `steamos`。构建完成后下载 `SunUEFI-Module`、`SunUEFI-ESP` 和 `SunUEFI-Root-steamos`。ESP 与其他发行版共用。助手里的安装顺序与 Debian 相同：创建独立存储分区，选择 ESP 和 root 镜像，刷写并启动。
+在 GitHub Actions 的 **Build products → Run workflow** 中选择 `steamos`。成功后打开
+`downloads.json`，下载 `SunUEFI-Module.zip`、`SunUEFI-ESP.zip` 和 `SunUEFI-Root-steamos.zip`。
+ESP 与其他发行版共用。助手里的安装顺序与 Debian 相同：创建独立存储分区，选择 ESP 和 root 镜像，刷写并启动。
 
 root 镜像容量为 16 GiB，独立 root 分区至少需要相同容量。账户为 `piano`，密码为 `piano123456`。首次启动 Steam 需要联网检查客户端更新并登录。
 
@@ -121,27 +123,23 @@ ACM 串口。串口用于独立采集内核日志；适配位于公共 BSP 的
 ## FFmpeg 和图形运行时
 
 FFmpeg 默认从源码构建为原生 pacman 包并替换根系统中的版本，保留
-Valve 原包的完整编解码配置和依赖。构建器按目标系统的 FFmpeg 7、8、9
-库接口选择补丁；新版 SteamOS 软件源使用 FFmpeg 8.1.1，状态切换、旧帧
-缓冲区保留、P010 十位输出和编码器 NV12 可见行复制补丁均有对应来源清单。
-缓存按补丁系列与包哈希校验，系列变化后重编并重新安装。遇到尚未适配的库版本
-会停止构建，不混装其他代际的共享库。
+Valve 原包的完整编解码配置和依赖。SteamOS 的 FFmpeg 8.1.2 使用 Valve
+的 x265 216 库接口，并保留状态切换、旧帧缓冲区、P010 十位输出和编码器 NV12
+可见行复制补丁。缓存同时核对目标包的版本、库依赖、编译选项、补丁与包哈希；
+声明的源码版本和目标已装包不相同时，构建会提示更新补丁系列。
 
 这会覆盖系统 FFmpeg 及使用它的程序。Steam 或 Electron 自带的私有编解码库不属于系统包，不能用不同 ABI 的共享库强行替换；其硬件视频路径需要分别确认。
 
 Valve 基底中的 Mesa 27.0.0-devel 已包含 Adreno 830v1，游戏模式可通过 Turnip
 渲染；其原生 GL 包却缺少分离的 MSM 显示节点所需的 GBM 路径，KWin 不能
-创建显示缓冲。构建按三个产品共用的 `config/mesa.json` 固定官方 Mesa 27 开发源码，
+创建显示缓冲。构建使用 `config/mesa.json` 固定的官方 Mesa 27 开发源码，
 使用完整 Arch 原生配方生成 Valve 包名的运行包，不裁剪为仅 Freedreno 的构建。
 缓存按生成的构建配方与包哈希校验，不降级到旧适配包。Softpipe 保留仅显示设备的缓冲分配回退，不强制
 桌面软件渲染。Wayland 协议构建依赖取自该 Mesa 提交自身的校验清单，不替换
 系统中的 Wayland 库。包名沿用 Valve 的 `deckard-mesa-linux-aarch64`，x86
 客体图形运行库保持原样，不向 SteamOS 安装 Debian 共享库。
 
-Freedreno 的 renderonly 路径分配显示缓冲时，将高度补齐到 GPU 的四行存储
-边界，资源的可见尺寸保持原样。否则 2400×1602、1280×854 等模式的缓冲小于
-GPU 导入布局，会在模式切换前被 Mesa 拒绝。修正只增加缓冲尾部空间，不改变
-显示模式、DSI 时序或内核大小检查。当前官方开发提交仍未包含这项修正，因此 SteamOS 的独立补丁保留；芯片 ID 与 DirectX-Headers 回移植已经删除。
+SteamOS 与 Debian、Arch Linux ARM 共用[显示缓冲高度修正](../hardware/display-depth.md#分辨率与刷新率)，以支持 2400×1602、1280×854 等分辨率。
 
 实机已运行 Plasma Wayland，OpenGL 使用 Freedreno，Vulkan 使用 Turnip；
 这些结果不能替代硬件视频解码或游戏兼容性验证。
@@ -214,9 +212,11 @@ Nyarch 的 FFmpeg 使用其当前软件包对应的适配和 ABI，不能直接�
 `kidletime 6.24.0-2`、`kwindowsystem 6.24.0-2` 和 `powerdevil 6.6.3-1`
 均使用 Qt 6.10.2 编译，而完整升级后的 Qt 为 6.11.0。Wayland 私有接口
 因此出现版本不匹配：亮度服务没有内屏，电源设置在窗口插件中触发 `SIGBUS`。
-这些组件按 `config/steamos.json` 使用同版 KDE 官方源码和当前 Qt 重编为
-pacman 包；`kscreen` 另有构建顺序补丁。缓存同时核对配方、补丁、Qt 包版本
-和输出包摘要；恢复构建时也会重新安装缓存包，避免被前面的基础升级替换。
+没有项目补丁且库能在当前 Qt 上加载时，保留同版或更新的 Valve 包。
+需要重编时，按 `config/steamos.json` 使用 KDE 官方源码和当前 Qt。若
+Valve 已更新到更高版本但库检查失败，更新对应配方，不能降级并打断
+同批 Frameworks 的依赖。`kscreen` 另有构建顺序补丁。缓存同时核对
+配方、补丁、Qt 包版本和输出包摘要。
 
 KWin 6.6.5 另有通用背光修正：内屏在 HDR 时使用最大硬件背光和软件亮度，
 退出 HDR 后必须使亮度缓存失效，才能通过原有亮度接口恢复用户设置。
@@ -225,6 +225,8 @@ KWin 6.6.5 另有通用背光修正：内屏在 HDR 时使用最大硬件背光�
 进入 6.8 分支。等 Valve 的包包含这项修复后删除本地回移；它不改变 HDR 能力判断或输出格式。
 带补丁的组件始终使用
 匹配配方的本地包；仅版本和 Qt 符号一致的仓库包不能替代这些修正。
+KWin 原生包保留 Valve 为 `kwin_wayland` 设置的 `CAP_SYS_NICE`，
+让合成器可以按上游方式为输入和显示提交线程申请实时调度。
 
 实机更新后，`kscreen-doctor` 正常识别内屏，标准亮度接口设置 50% 后背光
 请求值与值均为 `1024/2047`。电源管理页面可以重复打开，截图显示正常
@@ -235,6 +237,12 @@ KWin 6.6.5 另有通用背光修正：内屏在 HDR 时使用最大硬件背光�
 本地重编只解决当前组合。面向日常 `pacman -Syu` 的最终方案需要统一的基础
 软件源，以及随依赖升级重编、签名发布的 Piano 适配仓库。直接让 Arch Linux
 ARM 与 Valve 两套基础库互相覆盖，不会自动迁移不同包名、版本和私有接口。
+
+PipeWire 的回声消除依赖 WebRTC。SteamOS 只重编 WebRTC，Abseil 仍来自
+Valve。原生配方使用当轮构建安装的 Abseil 版本，检查产物链接到这版库的
+SONAME。包依赖匹配 Abseil 的源码版本，允许同版的打包修订正常升级。
+Valve 更新 Abseil 后，签名覆盖仓需要同时交付与新 ABI 匹配的 WebRTC，
+不能继续发布依赖旧库的归档。
 
 `stage_steamos_desktop.py` 禁用头显专用服务、原设备 MAC 地址设置、
 `by-partsets/shared/home` 和 offload 挂载，桌面入口改为原生 Plasma Wayland。
@@ -316,7 +324,7 @@ PRM 延迟探测，不再忽略回复直到五秒超时。其他 DSP 错误保�
 
 进一步实机对照将触发点定位到 VA 麦克风设备的 runtime suspend：
 7.3 的 PM-clock 转换会释放最后两路共享核心投票，随后出现 ADSP watchdog；
-保持这两路投票时，录音结束和设备空闲均正常。`0013` 仅为 SM8750 保留
+保持这两路投票时，录音结束和设备空闲均正常。[麦克风时钟补丁](../../../patches/linux/7.3/0333-LOCAL-asoc-va-sm8750-core-votes.patch)仅为 SM8750 保留
 `LPASS_HW_MACRO_VOTE`、`LPASS_HW_DCODEC_VOTE` 的注册期引用，采样时钟仍由
 runtime PM 管理，探测失败和移除时归还引用。其他型号保持原来的行为。
 这修正了已复现的触发条件，不代表长期稳定性或待机功耗已经测完。

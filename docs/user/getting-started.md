@@ -23,7 +23,7 @@
 
 ## 安装
 
-从 [Build products](https://github.com/slwyts/Project-SunUEFI/actions/workflows/build-products.yml) 同一次构建里下载三个包：`SunUEFI-Module`（引导助手模块）、`SunUEFI-ESP`（启动镜像）和 `SunUEFI-Root-发行版`（系统镜像）。把解压出来的模块 ZIP 和两个 `.sparse.img` 文件放到平板上，然后：
+按[下载说明](install-from-artifact.md#下载)选同一版本的引导助手模块、启动镜像和所选系统镜像。把解压出来的模块 ZIP 和两个 `.sparse.img` 文件放到平板上，然后：
 
 1. 在 KernelSU 或 SukiSU 的模块页面安装模块 ZIP，提示出现时按音量＋安装引导，重启。
 2. 在模块卡片上点 **打开 WebUI**，进入引导助手。
@@ -40,6 +40,11 @@
 ## 软件源与更新
 
 已经配置 SunUEFI 软件源的镜像，可以直接用包管理器更新。Debian 运行 `sudo apt update && sudo apt upgrade`，Arch 系（Nyarch、Arch Denial 和 SteamOS）运行 `sudo pacman -Syu`。更新内核前可用 `sudo bootctl --print-esp-path` 确认启动分区已挂载；重启失败时可在 systemd-boot 菜单选旧内核。
+
+较早的镜像可以让包管理器接管键盘套和触屏固件，之后随系统更新。Debian 用
+`sudo apt install piano-firmware-keyboard piano-firmware-touch`，Arch 系用
+`sudo pacman -Syu sunuefi/piano-firmware-keyboard sunuefi/piano-firmware-touch`。
+如果替换过原装固件，先按[设备固件说明](../../linux/bsp/README.md#设备固件包)保留自己的版本。
 
 ### 手动添加 APT 软件源
 
@@ -71,7 +76,7 @@ sudo pacman-key --lsign-key 1B89034B2C88892963C0C1CAD7D5F9A7080E6560
 sudoedit /etc/pacman.conf
 ```
 
-Nyarch 只添加 `[sunuefi]`；SteamOS 添加下面两个仓库，保持顺序。把它们放在发行版原有仓库之前，保留原有仓库和签名设置。
+Nyarch 和 Arch Denial 只添加 `[sunuefi]`；SteamOS 添加下面两个仓库，保持顺序。把它们放在发行版原有仓库之前，保留原有仓库和签名设置。
 
 ```ini
 [sunuefi-steamos]
@@ -83,7 +88,7 @@ SigLevel = Required TrustedOnly
 Server = https://sunuefi-repo.okassets.uk/pacman/$repo/os/$arch
 ```
 
-保存后运行 `sudo pacman -Syu`。`sunuefi-steamos` 只给 SteamOS 使用，不要把 Valve 的包混装进 Nyarch。
+保存后运行 `sudo pacman -Syu`。`sunuefi-steamos` 提供按 Valve 依赖构建的包，只用于 SteamOS。
 
 ## 充电记录
 

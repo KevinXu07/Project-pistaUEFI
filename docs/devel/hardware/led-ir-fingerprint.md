@@ -46,6 +46,8 @@ SE15 / QUP2 SE7 / CS0。GPIO28/29/30/31 分别为 MISO/MOSI/CLK/CS，
 编码在完整的 32 位零字后对齐到 1024 字节，1 秒波形填充后为 240640 字节。
 GENI 向 SPI 核心公布 QUP 映射设备支持的单段 DMA 大小，GPI 用一个数据描述符
 发送完整波形，不在脉冲之间拆分传输。
+GPI 成功时只通知 SPI 核心当前段完成，由核心累计实际长度并处理下一段；
+DMA 错误或有未传完的数据时标记消息失败。见[传输完成修复](../../../patches/linux/7.3/0462-LOCAL-spi-geni-qcom-complete-gpi-transfer.patch)。
 
 共享 [`设备树`](../../../linux/dts/piano-ir-spi-controller.dtso)沿用原厂
 GCC ID123、GIC SPI462、GPI2 SE7 和 IOMMU 路由。运行与休眠的差异只在
@@ -57,7 +59,7 @@ GENI 驱动在消息开始时选择 default，在队列空闲且 SE 确认停止
 提前解除仍被 DMA 使用的缓冲区映射。终止失败时保留消息、映射、时钟和引脚，
 继续恢复；不把超时当成硬件已停止。绑定、编码和空闲引脚由内核补丁系列的
 0041–0043 维护，单段 DMA 大小由
-[GENI SPI 补丁](../../../patches/linux/7.3/0138-LOCAL-spi-geni-qcom-map-large-gpi-transfers.patch)
+[GENI SPI 补丁](../../../patches/linux/7.3/0446-LOCAL-spi-geni-qcom-map-large-gpi-transfers.patch)
 处理。`RC_CORE`、`LIRC` 和 `IR_SPI` 配置由共享平台片段启用。
 
 ## 侧指纹
@@ -120,15 +122,17 @@ QTEE 使用通用 Linux TEE uAPI 的对象调用，不是 GlobalPlatform（GP）
 输入／输出缓冲区和对象引用分别转换，不把 GP memory reference 当作 QTEE memory object。
 回调输出缓冲区只属于该次调用，保持到 `SUPPL_SEND` 返回，再清零释放。
 传输错误不自动重发，也不假定 QTEE 未保留 callback；剩余引用在关闭 context 后回收。
-关闭传感器及安全程序、发出文件监听释放后才关闭 root。回调线程只有阻塞在 `SUPPL_RECV`
-时允许取消，执行文件操作、发送回复或持有用户空间锁时不可取消；随后等待线程退出。
+关闭传感器及安全程序后，停止文件请求并释放监听器注册。内核异步注销监听器，
+因此保持回调线程运行，直到收到释放通知。等待最多两秒，通知缺失时关闭 TEE context
+并回收本地引用，结束当前操作。回调线程只有阻塞在 `SUPPL_RECV` 时允许取消，
+执行文件操作、发送回复或持有用户空间锁时不可取消；随后等待线程退出。
 共享页由标准 TEE 内存引用保护，Linux 用户空间解除映射不绕过内核／安全世界的引用计数。
 
 ### 共享内存与传感器控制
 
 原始 QTEE 共享内存分配器使用 `alloc_pages_exact()`，超过伙伴分配器
 支持的最大阶数时会报错。项目的
-[`0014-qcomtee-large-shared-memory.patch`](../../../patches/linux/7.3/0014-qcomtee-large-shared-memory.patch)
+[`0334-LOCAL-qcomtee-large-shared-memory.patch`](../../../patches/linux/7.3/0334-LOCAL-qcomtee-large-shared-memory.patch)
 让大缓冲区使用可回收的 CMA 连续内存，小缓冲区保留原来的路径，
 并继续登记和注销安全世界的共享内存桥。
 [`piano-cma.dtso`](../../../linux/dts/piano-cma.dtso) 将默认池从 36 MiB
@@ -143,7 +147,7 @@ QTEE 使用通用 Linux TEE uAPI 的对象调用，不是 GlobalPlatform（GP）
 提供供电、复位和中断：原厂 DT 指定 GPIO73 复位、GPIO85 IRQ，
 `fp_3v3_vreg-supply` 指向 PM-HUMU L9。认证数据由安全服务处理；
 Goodix 客户端使用 `QSEECom_send_modified_cmd()` 发送请求。
-[`0017-uio-piano-fingerprint-control.patch`](../../../patches/linux/7.3/0017-uio-piano-fingerprint-control.patch)
+[`0337-LOCAL-uio-piano-fingerprint-control.patch`](../../../patches/linux/7.3/0337-LOCAL-uio-piano-fingerprint-control.patch)
 提供内核供电、复位和中断控制，设备树位于
 [`piano-fingerprint.dtso`](../../../linux/dts/piano-fingerprint.dtso)。
 打开 `piano-goodix` UIO 设备时打开供电并释放复位，关闭时停止中断、
@@ -191,27 +195,42 @@ QSEECOMPAT 的 lookup 返回 `architecture=2`，命令应使用 64 位地址，
 传感器类型为 5。无需给每条命令申请大缓冲区，也无需为这个查询启动
 文件／时间监听服务。
 
-[`0018` 内核修正](../../../patches/linux/7.3/0018-qcomtee-public-buffers-cma.patch)
+[QTEE CMA 缓冲区补丁](../../../patches/linux/7.3/0338-LOCAL-qcomtee-public-buffers-cma.patch)
 使应用共享内存使用设备树声明的连续内存池，保留驱动私有小消息的
 普通分配方式。地址范围由池的配置决定，不通过伪造指针或用户空间
 内存热补丁处理。
 
 原生客户端位于
 [`piano-goodix.c`](../../../linux/userspace/fingerprint/piano-goodix.c)，
-使用标准 Linux TEE 对象传输与固定版本的 QCBOR，CLI 由共享运行时构建器
-静态编译；来源记录在
+使用标准 Linux TEE 对象传输与固定版本的 QCBOR。
+诊断命令 `piano-fingerprint-ctl` 由可选的 `piano-fingerprint-tools` 原生包提供，
+不随桌面镜像预装；[构建说明](../building.md#单独构建的软件包)列出了打包命令。
+CLI 和 libfprint 后端共用源码，来源记录在
 [`config/fingerprint.json`](../../../config/fingerprint.json)。
 执行 `sudo piano-fingerprint-ctl info` 可查询设备信息，`--help` 不访问设备。
-签名程序按固件清单随镜像提供，不包含用户模板或密码。
+签名程序与模型由 [本地固件包 `piano-firmware-fingerprint`](../../../linux/bsp/README.md#本地固件包)
+按固件清单安装，不包含用户模板或密码。
 
 libfprint 在自己的构建中直接编译同一份后端和依赖源码，不再通过
 `piano-goodix.pc` 链接平台私有 `libpiano-goodix.a`。源码归档和补丁由运行时清单校验，
 Debian、SteamOS 和 Nyarch 各自使用目标发行版的头文件和库编译。
-Debian 构建依赖留在独立 rootfs，要求 libc／GLib 等开发包匹配目标运行库版本，
-依赖由 `dpkg-shlibdeps` 生成；安装前以目标 loader 核对新库和 fprintd 的符号解析。
-Debian 的 `SOURCE.json` 同时校验源码输入、目标 ABI、后端源码归档、二进制摘要、包身份和
-`Depends`；命中时不再创建构建 rootfs 或编译，仍执行目标链接检查与 APT 依赖模拟。
-Arch 系缓存同时核对配方摘要和运行库版本，不把另一套 ABI 的缓存直接安装。
+Debian 以签名软件源提供的源码配方构建 `libfprint-2-2`、`gir1.2-fprint-2.0`、
+`libfprint-2-dev`、`libfprint-2-doc` 和 `libfprint-2-tests`，五个包一同发布。
+镜像只预装运行库，已安装的可选包随库升级；`fprintd` 和 `libpam-fprintd`
+继续用 Debian 官方包。编译依赖只进入构建写层，不会装到系统镜像里。
+从旧 SunUEFI 运行库升级时，GIR 和开发包通过版本化的 `Breaks`／`Replaces`
+接管原先由运行库安装的文件。
+Arch Linux ARM 沿用[发行版配方](../../../config/fingerprint.json)的依赖和文件布局，
+由 `makepkg` 按实际 ELF 生成 `libfprint-2.so=2-64`，直接使用 `[extra]` 的
+fprintd。共用 `[sunuefi]` 保留旧归档供回退，但不再把旧 fprintd 列进活动索引，
+让 `pacman -Syu` 选到发行版原包。Valve 的 ARM64 源未提供这两个包，
+SteamOS 从 `[sunuefi-steamos]` 安装匹配 Valve OpenSSL ABI 的 libfprint 和未改源码的
+fprintd。两系都保留标准 udev、PAM 和 D-Bus 接口；SteamOS 的 `/etc/fprintd.conf`
+由 pacman 保留管理员修改。
+两套构建缓存分别核对配方摘要和运行库版本。
+`piano-device-config` 安装 systemd 的 fprintd 配置，沿用现有设备权限和
+`/var/lib/piano-goodix` 目录。包安装与移除不会重启正在认证的 fprintd，
+也不会删除模板。管理员可在 `/etc/systemd/system/fprintd.service.d/` 覆盖配置。
 这仍是本地 libfprint 包；源码补丁进入仓库不等于上游已收录，更不等于发行版原版包
 已经提供此设备后端。传感器控制仍使用 UIO，原厂签名程序的业务命令和 HAT 协议没有改变。
 上游提交还需解决 UIO 控制模型、Gatekeeper／共享 RPMB 的录入策略及固件再分发授权。

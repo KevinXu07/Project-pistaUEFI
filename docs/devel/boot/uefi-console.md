@@ -211,6 +211,11 @@ SimpleInit/LVGL 处理，物理显示模式保持原样；实机已确认横屏�
 
 产品驻留核心在 BDS 的控制台初始化完成后启动，先恢复变量和安装安全退出协议。
 普通自动启动先消费 `BootNext`，再按 `BootOrder` 读取 `Boot####` 的设备路径。
+如果 `BootNext` 的长度不符合 UEFI 规范，忽略它并沿用 `BootOrder`。
+如果一次性请求来自无法写入的变量快照，固件保留该请求并沿用 `BootOrder`，
+避免每次重启都执行同一个一次性启动项；仍可手动选择该项。
+如果保存时才遇到空间用尽或写保护，固件也沿用 `BootOrder`。交接前冻结变量写入，
+并继续核验文件系统已卸载、存储和 DMA 已退出。底层存储故障仍会阻止交接。
 从 SimpleInit 选“启动 Linux”时，沿用系统启动顺序，但跳过 SimpleInit 自身，
 也不消费为下次开机设置的 `BootNext`。没有指定文件的设备启动项由上游库尝试标准后备文件，
 不绑定某个加载器名称或分区标签。产品安装的 systemd-boot 继续发现
@@ -264,7 +269,8 @@ Services 后不再访问 UFS，NV 写入返回不支持；带认证属性的 Sec
 ext4 驱动用固定的 lwext4 源码读取变量文件、`persist/bluetooth/.bt_nv.bin`
 和 `persist/time/ats_2`。只允许创建项目目录并写入两个变量文件，写入还会更新
 必要的 ext4 元数据。发现卷需要恢复时只读挂载，变量修改留在内存中，日志由
-Android 恢复。标准 Block I/O 和 Fastboot 不提供原厂 `persist` 的原始写入。
+Android 恢复。ext4 驱动在产品核心内部访问 UFS，UEFI 应用只能经文件接口写入
+变量快照。标准 Block I/O 和 Fastboot 不提供原厂 `persist` 的原始写入。
 文件系统先停止日志、卸载并同步，再停止 USB、UFS、SMMU 和时钟。
 存在未关闭文件或无法确认 DMA 已停止时拒绝系统启动交接，不强行释放。
 
@@ -286,6 +292,8 @@ lwext4 的固定来源在 [`config/uefi-ext4.json`](../../../config/uefi-ext4.js
 “电源与重启”提供关机、普通重启、Recovery、Bootloader 和 EDL（9008）。
 动作先在菜单中登记。界面退出后，驻留核心保存设置、关闭文件系统，并完成存储、
 输入、USB 和显示资源的安全退出。`ExitBootServices` 成功后才调用 `ResetSystem`。
+Shell 的 `reset` 和 `drvcfg` 发出的重启请求也交给驻留核心。固件拒绝在交接前直接调用
+`ResetSystem` 的请求，退出启动服务后的系统重启继续使用标准接口。
 
 Recovery／Bootloader 使用原厂设备树的 PMK8550 SDAM 重启原因字段；
 EDL 使用 TCSR／SCM 下载模式，代码位于 `uefi/components/reset/`。

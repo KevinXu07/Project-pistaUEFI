@@ -125,7 +125,7 @@ x86 主机用 `./build.sh ffmpeg --sysroot 已完成的sid_ARM64根目录` 构�
 交叉编译使用 GNU 汇编器与链接器，保留 Debian 的符号版本表和调试信息处理。
 产品 CI 使用原生 ARM64 构建机，缓存与源码、补丁匹配的 Debian 运行包。
 
-Debian 的 Mesa、FFmpeg、sensors 在 sid 根目录的隔离副本中构建，不安装宿主容器的库或混用 trixie-backports。`--sysroot` 不修改输入根目录；包版本、源码归档、补丁和二进制哈希记录在各输出目录。三个产品共用 `config/mesa.json` 固定的官方 Mesa 27 开发源码；Debian 保留 sid 原始完整配方，Nyarch 使用 Arch Linux ARM 的完整配方。官方源码已包含 830v1 和 DirectX-Headers 修正，旧26.2回移植已删除。SteamOS 的 renderonly 高度修正仍单独保留，因为该官方提交只对齐缓冲宽度，不保证非4行对齐模式的尾部空间。
+Debian 的 Mesa、FFmpeg、sensors 在 sid 根目录的隔离副本中构建，不安装宿主容器的库或混用 trixie-backports。`--sysroot` 不修改输入根目录；包版本、源码归档、补丁和二进制哈希记录在各输出目录。Debian、Arch Linux ARM 和 SteamOS 共用 `config/mesa.json` 固定的 Mesa 27 开发源码和[显示缓冲修正](hardware/display-depth.md#分辨率与刷新率)。Debian 从官方 Snapshot 获取完整打包配方，SHA-256 取自 Debian 签名索引；编译依赖仍从当前 sid 安装。Debian 经 quilt 应用补丁，pacman 包在原生 PKGBUILD 中应用补丁。
 
 已有 sid ARM64 根目录时，可以单独重建这三组包：
 
@@ -162,6 +162,8 @@ KDE 镜像明确安装 `plasma-desktop` 和 `upower`。最小化安装不拉取�
 
 内核只绑定 `config/release.json` 的 `kernel` 子对象，按规范化 JSON 记录内容与 SHA256；修改 sensors、Mesa、登录或其他根系统配置不使内核缓存失效，内核配置、源码与工具链变化仍会失效。旧内核清单只保存整份配置文件摘要，无法还原当时的子对象，需要正常构建一次生成新记录；不会改写旧清单来跳过构建。
 
+桌面覆盖包的选择不参与内核缓存。内核和其他原生包共用归档读取与下载校验；修改这部分代码仍会更新内核缓存键。
+
 固定 LLVM 归档、固件中间对象及 ccache 分开缓存，避免每次下载工具链或因小改动完全丢失对象缓存。只保存 LLVM 压缩归档，不把展开后十余 GiB 的目录占满 Actions cache。构建容器按 Dockerfile、固定基础镜像及构建器区分，载入时核对归档摘要和 OCI 镜像 ID。每种共享缓存只有一个写入 job，本地入口通过文件锁串行更新并原子发布缓存记录。
 LLVM 缓存缺失时重新下载同一官方归档，并核对固定的 SHA256。
 
@@ -175,18 +177,33 @@ python3 tools/build/shared_products.py verify --kind firmware
 python3 tools/build/shared_products.py verify --kind kernel
 ```
 
-这些命令只由 CI 或维护者的本地共用构建调用，不改变 rootfs 的安装过程。覆盖包只缓存已完成的包档案与清单，不缓存半装好的构建根。复用前仍准备新的发行版基底，核对实际构建容器、源码与配方、所用内核接口、已安装包、仓库配置和索引；Nyarch 另核对应用实际构建的 Git 提交。任一输入不匹配就重编，不把滚动仓库锁在旧索引上。
+这些命令只由 CI 或维护者的本地共用构建调用，不改变 rootfs 的安装过程。成品缓存只收录已完成的覆盖包档案与清单，不保存半装好的构建根。复用前仍准备新的发行版基底，核对实际构建容器、源码与配方、所用内核接口、已安装包、仓库配置和索引；Nyarch 另核对应用实际构建的 Git 提交。任一输入不匹配就重编，不把滚动仓库锁在旧索引上。
+
+覆盖包构建更新了编译缓存时，即使随后有包编译失败，CI 也会保存 ccache。重跑只复用输入匹配的编译结果；未完成的包组不能发布。直接复用完整包组时，不重复上传未变的编译缓存。
 
 Debian 核对已签名的 sid `Packages` 与 `Sources`，子构建器共用已选定的索引；Arch 系用各自 pacman 配置下实际的数据库，安装包时仍按发行版签名策略校验。缓存命中后逐个核对包名、版本、架构和 SHA256。完整 root 镜像不存入构建缓存。首次编译、仓库刷新、根系统安装和镜像导出仍需要时间。
 只改主机检查入口不会使产品缓存失效；UEFI 的变量处理脚本只影响固件缓存。
 
 CI 实际重编覆盖包时，使用该次运行和重试编号增加原生包修订号：Debian 在配方版本后加 `+sunuefi.<运行编号>.<重试编号>`，Arch 使用 `pkgrel` 的数字子修订。属于同一源包的多个二进制包保持同一版本。命中缓存或直接使用 Debian 官方签名的 FastRPC 包时，保留原版本和原文件；本地构建默认仍使用配方版本。
 
+pacman 的发布清单可包含完整的应用和媒体拆包。组镜像时只装桌面默认包、
+它们的依赖，以及系统已安装的对应拆包；例如不会同时安装两种 JACK 实现。
+镜像完成后回读这一批实际装入的版本。Arch Linux ARM 与 SteamOS 的
+相机包共同提交发布。首次换用标准 V4L2 模块时，先从共用索引撤下旧插件并验签回读，
+再切换并验签 SteamOS 索引，最后发布新的共用索引。旧包仍可用于回退。
+SteamOS 为共用源中的媒体运行包提供同名 Valve 构建，只有不依赖运行库的
+`libcamera-docs` 共用。
+
+只改 `tools/repo/` 下的软件源发布逻辑时，UEFI 和输入不变的覆盖包可以复用缓存；
+发布前仍用新的检查代码验包。SteamOS 更新 Valve 基础包后，先确认相机包仍使用
+Valve 的包数据库，再开始编译覆盖包。
+
 `./build.sh camera-package` 在构建容器中生成 `piano-camera` 的两种 ARM64 原生包。
 相机包使用发行版的用户空间接口头文件和静态库，不依赖某一次内核编译。
 缓存按相机源码、依赖补丁、配方、版本和构建器区分；只更新内核时复用原包。
 发布版本和最低内核元包版本在 `config/release.json` 的 `camera_package` 中；
-修改已经发布的包内容时提升 `revision`，不要用同一版本覆盖不同文件。
+相机源码或构建器的静态库更新后，如果生成的文件与已发布的包不同，就提升
+`revision`。同一版本不覆盖不同文件，旧包仍可用于回退。
 
 本地和 GitHub 的完整构建走同一个 `release-rootfs` 入口。默认系统包含中文界面、拼音输入法、Chromium、GNOME 动画、蓝牙地址自动初始化和触控笔组件。根系统生成后会检查这些软件包和必需文件，结果记录在 `manifest.json` 的 `default_system`，缺少任何一项构建就失败。
 
@@ -215,9 +232,55 @@ Debian 镜像用 `update-alternatives` 选择 `wireless-regdb` 包自带的上�
 python3 tools/package_sparse_images.py --bundle artifacts/release --output artifacts/fastboot-sparse
 ```
 
-Arch Denial 使用 `./build.sh arch-denial-rootfs`，路径换成 `arch-denial-piano`；SteamOS 使用 `./build.sh steamos-rootfs`，路径换成 `steamos-piano`。Nyarch 从 Arch Linux ARM 基础系统开始，通过签名仓库安装软件包，再构建 Nyarch 应用和 Piano 的原生硬件包，源码和扩展选择在 `config/nyarch.json`。SteamOS 的构建细节见 [SteamOS ARM64](linux/steamos.md)。
+Arch Denial 使用 `./build.sh arch-denial-rootfs`，路径换成 `arch-denial-piano`；
+SteamOS 使用 `./build.sh steamos-rootfs`，路径换成 `steamos-piano`。Nyarch 从
+Arch Linux ARM 基础系统开始，通过签名仓库安装软件包，再构建 Nyarch 应用和
+Piano 的原生硬件包，源码和扩展选择在 `config/nyarch.json`。
 
-两种 Denial 镜像从 [Denial 签名源](https://github.com/denialwm/denial/blob/main/docs/INSTALL.md#repository-trust-paths)安装合成器及其匹配的 Flutter Engine。Debian 只从该源取 Denial 自身的包，系统依赖仍用 sid；Arch Linux ARM 仍使用自己的滚动源。SDDM 加载 Denial 原版 Wayland 会话，默认使用触控布局。相机和其他硬件继续用 Piano 的标准驱动和发行版软件包，不安装 Phonewave 的板级服务或 Android 容器。Denial 的自动旋转目前没有接入标准 SensorProxy，可在显示设置手动选方向。
+构建 Nyarch 和 Arch Denial 时，从 `config/nyarch.json` 指定的同一个 Arch Linux ARM
+镜像取索引和软件包，避免从一个镜像拿索引，再去另一个镜像找对应的包。
+安装后的官方镜像列表不变。SteamOS 的构建细节见 [SteamOS ARM64](linux/steamos.md)。
+
+两种 Denial 产品镜像从 SunUEFI 签名源安装接入 SensorProxy 的合成器。
+Debian 从 [Denial 签名源](https://github.com/denialwm/denial/blob/main/docs/INSTALL.md#repository-trust-paths)
+获取匹配的原版 Flutter Engine，系统依赖仍用 sid。Arch 的 `[sunuefi]`
+在同一份索引里提供合成器、可选插件管理器和字节不变的原版 Engine；
+更新这组包时按同一版核对，避免新版 Engine 先于合成器升级。
+SDDM 加载 Denial 原版 Wayland 会话，默认使用触控布局。Piano 的显示控制器
+和 Adreno GPU 是不同的 DRM 设备；用 Denial 自带的 `DENIAL_RENDER_DEVICE`
+指向 GPU 的稳定 udev 路径，内屏输出仍由显示控制器负责。相机和其他硬件继续
+用 Piano 的标准驱动和发行版软件包。独立的本地 rootfs 构建仍可使用上游包。
+
+两版默认使用 Thunar、foot 和 Chromium，随发行版安装文件传输、拼音、
+剪贴板、mpv 和 imv。文件关联用标准 XDG 设置，Thunar 通过 GVfs 访问
+U 盘、手机与 SMB。权限确认、网络、蓝牙及音量继续由 Denial 提供；
+文件选择和屏幕共享使用随 Denial 配置的 GTK 与 wlr 门户。
+
+开发时可用 `./build.sh denial --test` 测试
+[SensorProxy 补丁](../../patches/denial/0.6.8/series.json)。
+在 ARM64 构建环境运行 `./build.sh denial --release`，或在 x86-64 上用
+`./build.sh denial --arch-sysroot "$ARCH_ARM64_ROOT"` 交叉编译。
+这些命令从同一签名标签构建，补丁优先使用标准加速度计接口，内屏熄灭
+后释放请求。产品任务只编译一次 ARM64 合成器；缓存键绑定源码、补丁、
+Rust 和实际安装的原生依赖，复用前核对文件摘要和源码记录。
+`--overlay-target` 从同版签名发布取得原包和校验清单，为对应产品生成原生包：
+
+```sh
+./build.sh denial --overlay-target debian-denial \
+  --package-output artifacts/packages/overlays/debian-denial
+./build.sh denial --overlay-target arch-denial \
+  --package-output artifacts/packages/overlays/arch-denial
+```
+
+发布使用现有 APT 和 pacman 索引。只有 Denial 镜像读取对应包清单，
+先通过原生包管理器验签、比对归档摘要，再安装。产品任务重打
+`denial` 和 `denial-plugin-manager`，Arch 的 Engine 不重打。
+
+Droidloom 使用独立的原生包。`./build.sh droidloom-package --help` 列出
+Debian 和 Arch 的构建参数：从固定源码为目标发行版编译宿主程序，从上游
+Android 构建目录或固定摘要的 ARM64 归档取得镜像。`runtime`、`image` 和
+`base` 通过原生依赖保证版本配套，安装时不启动容器，也不改原厂 Android。
+首次配置完成后，从桌面点 Android 应用会按需启动 Droidloom。
 
 已有隔离的 ARM64 pacman 构建根目录时，可单独构建并安装完整 Mesa 包；此操作会修改指定的构建根目录，不要直接使用已交付的产品根目录：
 
@@ -226,16 +289,32 @@ sudo ./build.sh mesa build/mesa-nyarch --format pacman --rootfs build/distros/ny
 sudo ./build.sh mesa build/mesa-steamos --format pacman --rootfs build/distros/steamos-builder/rootfs --steamos --jobs 8
 ```
 
-中断后使用相同参数加 `--resume`，保留已配置的源码和对象。SteamOS 构建保留 `deckard-mesa-linux-aarch64` 包名及 renderonly 高度补丁；Nyarch 保留 Arch Linux ARM 的原生拆分包。
+中断后使用相同参数加 `--resume`，保留已配置的源码和对象。SteamOS 构建保留 `deckard-mesa-linux-aarch64` 包名；Nyarch 和 Arch Denial 保留 Arch Linux ARM 的原生拆分包。
 
 两种产品构建都会检查 Mesa 源码、完整驱动选项和 ARM64 包。CI 分别缓存原生包；复用前核对来源、配方与包摘要，安装后重新检查 ELF 和目标系统的依赖，避免把不匹配的滚动发行版缓存带入镜像。
 
-各产品由 APT 或 pacman 安装 `piano-firmware-display`，根系统组装核对两份
-校准的归属、大小与 SHA256。CI 共用这两个包，只用于组装镜像，不上传到软件源。
-其他设备固件仍按 `vendor/firmware/` 下的组件清单校验后安装。
-恢复已生成的根系统时，只迁移内容吻合且未被其他包持有的旧校准文件。
+各产品由 APT 或 pacman 安装键盘套、显示校准、触屏和指纹固件包，组装时核对包归属、
+文件大小和 SHA256。`piano-firmware-keyboard` 和 `piano-firmware-touch` 随共用
+设备包发布到 APT 和 `sunuefi`，SteamOS 也从共用仓安装。显示包随 CI 共用设备
+产物提供，指纹包在组装时从固定固件清单构建；这两个包不上传软件源。其余设备
+固件仍按 `vendor/firmware/` 下的组件清单校验后安装。
 
 ### 单独构建的软件包
+
+仅在需要指纹诊断时构建、安装 `piano-fingerprint-tools`。使用当前
+内核导出的头文件目录（其下有 `include/linux/tee.h`）：
+
+```sh
+./build.sh bsp package --fingerprint-tools build/runtime/uapi \
+  --target debian --format deb --output build/fingerprint-tools/debian
+./build.sh bsp package --fingerprint-tools build/runtime/uapi \
+  --target arch --format pacman --output build/fingerprint-tools/pacman
+```
+
+Debian 用 `apt install ./路径.deb`，Arch 和 SteamOS 用
+`pacman -U ./路径.pkg.tar.zst`。运行 `piano-fingerprint-ctl --help`
+不访问传感器；日常指纹功能不需要这个包。新版设备配置包会清理由旧镜像
+复制且未被修改的旧工具，保留管理员自己的副本和已有的指纹登记。
 
 CPU 型号由 `linux/dts/piano-cpu-model.dtso` 给八个 CPU 节点加标准 `model` 属性，内核补丁把它输出为 `/proc/cpuinfo` 的 `model name`，让 GNOME 显示 Snapdragon 8 Elite。MIDR、核心拓扑、时钟和板型号保持原值。
 
@@ -255,12 +334,12 @@ CPU 型号由 `linux/dts/piano-cpu-model.dtso` 给八个 CPU 节点加标准 `mo
 | --- | --- | --- |
 | Linux 内核与模块 | Debian 的 `bindeb-pkg` 和 Arch 的 `pacman-pkg` 原生包 | 随包安装并维护匹配的模块，由元包选择最新版本 |
 | 设备树 | 组合板级 DTB、overlay 和绑定转换，按内核版本打包 | 生成启动文件时选取同版文件，逐步收敛到内核源码中的板级设备树 |
-| Linux 设备固件 | 显示校准由 `piano-firmware-display` 安装；触控固件可单独[构建本地软件包](../../linux/bsp/README.md#本地固件包)，其他固件仍由组装脚本安装 | 发行版提供通用固件，设备包补齐板级固件 |
+| Linux 设备固件 | 键盘套、显示校准、触屏和指纹通过[原生包](../../linux/bsp/README.md#设备固件包)安装，其他固件仍由组装脚本安装 | 发行版提供通用固件，设备包补齐板级固件 |
 | ALSA UCM、udev、笔校准及音频拓扑 | 成品安装 `piano-device-config` 和 `piano-audio-topology` | 开源拓扑随独立包更新，剩余硬件运行文件继续按组件打包 |
 | Mesa、FFmpeg | 已有 Debian 和 pacman 原生包 | 保留目标发行版完整配方、功能和 ABI，按软件源正常更新 |
 | 传感器 | Debian 提供六个原生包；Nyarch 与 SteamOS 共用 `piano-sensors`，FastRPC、libssc 和 SensorProxy 按各自的库接口打包 | 继续通过标准 SensorProxy 接口提供照度和姿态 |
-| PipeWire | Debian 重建原生同版包组；Nyarch 和 SteamOS 重建采集插件 | 保留发行版的依赖关系，升级到包含修复的上游版本后删除回移 |
-| 指纹 | libfprint／fprintd 使用目标发行版包；CLI 和服务配置另行安装 | 正常包拥有全部必要文件，标准认证结果仍取自 libfprint／fprintd |
+| PipeWire | Debian、Arch Linux ARM 和 SteamOS 分别重建原生同版包组 | 保留发行版的依赖关系，升级到包含修复的上游版本后删除回移 |
+| 指纹 | libfprint／fprintd 使用目标发行版包，设备权限和模板目录配置归 `piano-device-config`，固件独立打包 | 诊断工具独立打包，标准认证结果仍取自 libfprint／fprintd |
 | 相机 | 两种包管理器安装 `piano-camera`；`v4l2loopback` 随匹配内核安装 | 标准 libcamera 路径接管后移除过渡服务 |
 | 笔及诊断工具 | `piano-device-config` 安装笔的 BlueZ 服务和依赖；诊断工具仍由构建脚本复制 | 开发工具独立打包，不成为笔输入的依赖 |
 | GNOME／KDE／SteamOS 组件 | Mutter、GDM、GSD、libwacom、Gamescope 等已有原生包，默认设置和会话文件仍有 overlay | 通用修复维护一份补丁，设备配置与产品默认值分开，不覆盖用户设置 |
@@ -347,6 +426,9 @@ Piano 的 mkinitcpio 配置只跳过这些钩子，保留系统及用户配置�
 systemd-boot 本身由发行版提供。成品启用 systemd 的 `systemd-boot-update.service`，
 用软件包里的 EFI 文件更新启动分区上的副本，不需要写固件变量。`piano-boot-config`
 让该服务等已安排的启动分区挂载完成；未配置启动分区挂载时，不额外启动挂载任务。
+SteamOS 用这个服务在下次开机同步 EFI 文件。Debian 的 `systemd-boot` 包还会在
+APT 配置软件包时执行更新，可能补录固件启动项；目标 ESP 没有 systemd-boot 时，
+Debian 包脚本可执行首次安装并接管默认 EFI 文件。
 
 Nyarch、Arch Denial 和 SteamOS 把 ESP 直接挂在 `/boot`，内核、initramfs 和启动菜单在同一个分区。
 Debian 把 ESP 挂在 `/boot/efi`，APT 管理的内核文件仍留在根文件系统的 `/boot`。
@@ -375,8 +457,10 @@ Arch 系运行 `sudo kernel-install add-all`；Debian 的内核文件在 `/boot`
 共用的初装启动项不设排序键，升级后由发行版生成的入口优先；
 仍可从菜单选择旧入口，也可改用自己的启动参数、名称和更新方式。
 
-回退必须同时保留旧启动文件、模块和 DTB。Debian 和 Arch 的设备内核都按
-release 使用不同包名，元包升级不会替换旧版本包；从 systemd-boot 菜单选择旧版即可。
+成功安装新启动项以后，启动分区保留最新内核和一份回退内核；连续升级但还没重启时，
+优先把正在运行的版本留作回退。通过 systemd 的 `bootctl` 移除更早的 Piano 启动项及
+不再被引用的文件，不改其他系统的引导。Debian 和 Arch 的设备内核都按 release 使用
+不同包名，旧版本的模块和 DTB 仍由包管理器管理；需要回退时，在 systemd-boot 菜单选旧版。
 相机 `v4l2loopback` 模块也按 release 并存，由内核元包安装匹配版本并交给
 包管理器更新模块索引。
 Arch 默认不生成可选的 `fallback` initramfs；它包含同一内核的更多模块，
@@ -417,8 +501,12 @@ APT 先上传 SHA512 和 SHA256 的 `by-hash` 索引，再更新 `InRelease`。
 下次发布从这份签名索引继续。
 产品构建先核对 pacman 新索引选中的包名、版本和 SHA-256，再上传索引。
 如果索引已选中更新的版本，发布会停止；用高于已发布版本的包重新构建。
-同一上游内核版本的新 ABI 必须推进 `abi_epoch`；APT 和 pacman 发布都检查这一点，
-避免摘要的字母顺序决定升级方向。
+Arch 的 `libpipewire` 和 SteamOS 的 `pipewire` 负责替换各自的旧
+`pipewire-v4l2-source`。旧插件从相应仓库的当前索引移除；
+旧归档和已签名的索引仍可用于回退。
+同一上游内核版本的新 ABI 必须推进 `abi_epoch`，避免摘要的字母顺序决定升级方向。
+共享内核包完成后，CI 先与公网签名索引比对，再构建各发行版的软件包；
+公网暂时无法验签时，发布步骤仍从 R2 核对实际索引。
 pacman 数据库和分离签名是不同对象，发布期间可能短暂验签失败，应重试，
 不能关闭签名检查。上传中断时，发布工具仍可从上一份完整索引继续。
 
@@ -439,17 +527,23 @@ pacman 数据库和分离签名是不同对象，发布期间可能短暂验签�
 
 ## CI 下载
 
-GitHub Actions 的 **Build products** 在 `main` 上有相关改动时自动运行，也可以手动选择 `all`、`uefi`、`linux` 或任一发行版。只改文档不会触发构建，唯一的例外是 `docs/user/install-from-artifact.md`，改动它会触发整套产品构建。选择规则在 `tools/ci_build_targets.py`。
+GitHub Actions 的 **Build products** 先做[主机检查](testing.md#ci-检查)。发往 `main` 的 PR
+到此结束；合入后只构建受改动影响的产品。也可以手动选择 `all`、`uefi`、`linux` 或任一发行版。
+只改文档会检查，但不编译，安装指南 `docs/user/install-from-artifact.md` 除外。选择规则在
+`tools/ci_build_targets.py`。
+同一分支的产品任务排队串行执行。后一次提交不会顶掉等待中的任务，也不会在前一轮镜像安装软件包时更新软件源索引。
 
 | 下载名称 | 内容 |
 | --- | --- |
-| `SunUEFI-Module` | Android 引导助手模块 ZIP |
-| `SunUEFI-UEFI-Fastboot` | 用于 `fastboot boot` 的独立 UEFI 镜像 |
-| `SunUEFI-ESP` | 各发行版共用的稀疏 ESP 镜像 |
-| `SunUEFI-Root-发行版` | 对应[构建目标](#完整系统)的稀疏 root 镜像 |
-| `logs` | 合并的构建日志、来源清单和校验记录 |
+| `SunUEFI-Module.zip` | Android 引导助手模块 ZIP |
+| `SunUEFI-UEFI-Fastboot.zip` | 用于 `fastboot boot` 的独立 UEFI 镜像 |
+| `SunUEFI-ESP.zip` | 各发行版共用的稀疏 ESP 镜像 |
+| `SunUEFI-Root-发行版.zip` | 对应[构建目标](#完整系统)的稀疏 root 镜像 |
+| `logs.zip` | 合并的构建日志、来源清单和校验记录 |
 
-模块、UEFI 镜像和 ESP 每次只上传一份，root 镜像按发行版分别上传。安装时把所选发行版的 root 镜像和同一次构建的 ESP 配套使用，步骤见[安装指南](../user/install-from-artifact.md)。
+成功构建在 Actions 留下 `downloads.json`，以上 ZIP 由 Cloudflare R2 提供下载。模块、UEFI
+镜像和 ESP 每次只上传一份，root 镜像按发行版分别上传。安装时使用同一次构建的 root 和 ESP，
+见[安装指南](../user/install-from-artifact.md)。
 
 ## 安装器
 

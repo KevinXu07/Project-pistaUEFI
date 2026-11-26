@@ -14,8 +14,9 @@ FULL_FILES = {'.github/workflows/build-products.yml', '.gitmodules',
               'uefi/handoff/bootselect/BootRequest.c',
               'uefi/handoff/bootselect/BootRequest.h',
               'docs/user/install-from-artifact.md'}
-FULL_PREFIXES = ('.github/workflows/', '.github/actions/', 'tools/', 'config/', 'containers/', 'linux/',
-                 'vendor/piano-linux/', 'vendor/firmware/', 'patches/', 'upstream/')
+FULL_PREFIXES = ('.github/workflows/_', '.github/actions/', '.github/scripts/',
+                 'tools/', 'config/', 'containers/', 'linux/', 'vendor/piano-linux/',
+                 'vendor/firmware/', 'patches/', 'upstream/')
 UEFI_FILES = {'requirements-build.txt', 'tools/build_android_product_module.py',
               'tools/build_android_module.py', 'tools/build_boot_repack.py',
               'tools/build_boot_request.py', 'tools/build_storage.py',
@@ -31,9 +32,19 @@ UEFI_PREFIXES = ('android/', 'uefi/', 'vendor/piano/', 'patches/firmware/',
                  'tools/prepare_product_')
 DISTROS = ['debian-gnome', 'debian-kde', 'debian-denial', 'nyarch-gnome',
            'arch-denial', 'steamos']
+DENIAL_TARGETS = ('debian-denial', 'arch-denial')
+DENIAL_FILES = {'config/denial.json', 'config/keys/denial-repo-key.asc',
+                'containers/denial.Dockerfile', 'tools/build/denial.py',
+                'tools/build/denial_manifest.py', 'tools/build/denial_overlay.py',
+                'tools/desktop/build_denial.py', 'tools/desktop/denial_packages.py'}
 TARGETS = ('uefi', 'linux', *DISTROS)
-CHECK_ONLY_FILES = {'.github/workflows/host-checks.yml', 'tools/check_host.py',
-                    'tools/build/check_patch_series.py'}
+NON_PRODUCT_FILES = {
+    '.github/workflows/_checks.yml', '.github/workflows/_downloads.yml',
+    '.github/scripts/publish_build_downloads.py', '.github/scripts/publish_release_images.py',
+    'tools/check_host.py', 'tools/build/check_patch_series.py', 'tools/ci_build_targets.py',
+    'patches/linux/AGENTS.md', 'patches/linux/LICENSE', 'patches/linux/README.md',
+    'patches/linux/7.3/README.md',
+}
 
 
 def shared_kinds(targets):
@@ -52,6 +63,7 @@ def overlay_targets(targets):
     # The shared Arch sensor package must have an ABI-matched SSC provider in both repositories.
     if selected & {'nyarch-gnome', 'arch-denial', 'steamos'}:
         result.extend(('nyarch-gnome', 'steamos'))
+    result.extend(target for target in DENIAL_TARGETS if target in selected)
     return result
 
 
@@ -65,8 +77,12 @@ def select(files, manual=None):
     files = list(files)
     full = DISTROS.copy()
     uefi = False
+    denial = False
     for name in files:
-        if name in CHECK_ONLY_FILES:
+        if name in NON_PRODUCT_FILES:
+            continue
+        if name in DENIAL_FILES or name.startswith('patches/denial/'):
+            denial = True
             continue
         if name in FULL_FILES:
             return full
@@ -77,7 +93,7 @@ def select(files, manual=None):
             return full
     # A normal product push always delivers the matching module, ESP and root.
     # Firmware/kernel-only builds remain explicit maintainer dispatch options.
-    return full if uefi else []
+    return full if uefi else list(DENIAL_TARGETS) if denial else []
 
 
 def changed_files(root, before):

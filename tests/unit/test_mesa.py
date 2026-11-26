@@ -3,8 +3,10 @@ from contextlib import contextmanager, redirect_stdout
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
+import json
 from pathlib import Path
 import sys
+import tarfile
 import tempfile
 import threading
 import unittest
@@ -12,6 +14,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools'))
 from build import mesa
+from ci_build_targets import DISTROS
 
 
 @contextmanager
@@ -49,6 +52,13 @@ class MesaTests(unittest.TestCase):
         self.assertTrue(data['source']['url'].startswith(data['source']['repository'][:-4]))
         self.assertFalse((mesa.ROOT / 'patches/mesa/26.2.6/series.json').exists())
 
+    def test_height_alignment_is_shared_by_every_mesa_target(self):
+        series = json.loads((mesa.ROOT / mesa.policy()['patch_series']).read_text())
+        self.assertEqual(set(series['targets']), set(DISTROS))
+        patches = mesa.patch_proof()
+        self.assertIn('0001-freedreno-renderonly-height-alignment.patch',
+                      {Path(row['path']).name for row in patches})
+
     def test_recipe_retains_all_other_drivers_and_supported_layers(self):
         original = ('GALLIUM_DEFAULTS = softpipe\nGALLIUM_DRIVERS += freedreno llvmpipe softpipe\n'
                     'VULKAN_LAYERS += anti-lag device-select intel-nullhw overlay screenshot\n')
@@ -57,6 +67,28 @@ class MesaTests(unittest.TestCase):
         self.assertNotIn('GALLIUM_DEFAULTS = softpipe', changed)
         self.assertIn('vram-report-limit', changed)
         self.assertNotIn('anti-lag', changed)
+
+    def test_debian_recipe_uses_pinned_archive_without_live_source_index(self):
+        recipe = {'debian/rules': b'#!/usr/bin/make -f\n',
+                  'debian/control': b'Source: mesa\n'}
+        payload = io.BytesIO()
+        with tarfile.open(fileobj=payload, mode='w:xz') as archive:
+            for name, data in recipe.items():
+                member = tarfile.TarInfo(name)
+                member.size = len(data)
+                archive.addfile(member, io.BytesIO(data))
+        data = payload.getvalue()
+        with (archive_server([(200, data, len(data))]) as (url, calls),
+              tempfile.TemporaryDirectory() as temporary,
+              patch.object(mesa, 'policy', return_value={'debian': {'recipe': {
+                  'version': '26.2.7-1', 'url': url, 'size': len(data),
+                  'sha256': hashlib.sha256(data).hexdigest()}}})):
+            path, origin, extracted = mesa.packaging_source(Path(temporary))
+            self.assertEqual(extracted, recipe)
+            self.assertTrue(mesa.packaging_matches(origin))
+            self.assertEqual(path.name, 'mesa_26.2.7-1.debian.tar.xz')
+            self.assertEqual(mesa.packaging_source(Path(temporary))[1], origin)
+            self.assertEqual(len(calls), 1)
 
     def test_official_source_integrity_refuses_local_edits(self):
         with tempfile.TemporaryDirectory() as temporary:

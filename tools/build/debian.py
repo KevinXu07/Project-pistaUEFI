@@ -298,41 +298,38 @@ def build_sources(root):
 
 
 @contextmanager
-def builder(output, sysroot=None):
-    from desktop.debian_package import verify_build_archive
+def builder(output, sysroot=None, *, overlay=False):
+    from desktop.debian_package import build_root, verify_build_archive
 
     output = output.resolve()
     if os.geteuid() or not output.is_relative_to(ROOT / 'build'):
         raise ValueError('Run as root with an output below the project build directory')
     output.mkdir(parents=True, exist_ok=True)
-    root = output / 'builder/rootfs' if sysroot else Path('/')
-    if sysroot:
-        sysroot = sysroot.resolve()
-        if root.is_relative_to(sysroot) or not sysroot.is_dir():
-            raise ValueError('Use an existing sysroot outside the output directory')
-        if not root.exists():
-            root.parent.mkdir(parents=True, exist_ok=True)
-            run(['cp', '-a', '--reflink=auto', sysroot, root])
-        resolver = root / 'etc/resolv.conf'
-        resolver.unlink(missing_ok=True)
-        resolver.write_bytes(Path('/etc/resolv.conf').read_bytes())
-        # Build-only sources live in the disposable clone, not the supplied root.
-        # Use the official sid archive for source and contrib FastRPC dependencies.
-        build_sources(root)
-    elif platform.machine() not in ('arm64', 'aarch64'):
-        raise ValueError('On non-ARM64 hosts use --sysroot; host dependencies are never installed')
-    workspace = root / 'workspace' if sysroot else ROOT
-    mounts = []
-    with packaging_devices(root), ExitStack() as stack:
+    with ExitStack() as stack:
+        root = Path('/')
+        if sysroot:
+            sysroot = sysroot.resolve()
+            if output.is_relative_to(sysroot) or not sysroot.is_dir():
+                raise ValueError('Use an existing sysroot outside the output directory')
+            root = stack.enter_context(build_root(sysroot, output, overlay=overlay))
+            resolver = root / 'etc/resolv.conf'
+            resolver.unlink(missing_ok=True)
+            resolver.write_bytes(Path('/etc/resolv.conf').read_bytes())
+            # Keep build-only sources out of the supplied root.
+            build_sources(root)
+        elif platform.machine() not in ('arm64', 'aarch64'):
+            raise ValueError('On non-ARM64 hosts use --sysroot; host dependencies are never installed')
+        stack.enter_context(packaging_devices(root))
         # Concurrent package builds share one prepared host-tool directory.
         # Serialize its preparation, not the independent package compilation.
         with (ROOT / 'build/host-package-tools.lock').open('w') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             env = stack.enter_context(package_build.environment(root))
         if sysroot:
+            workspace = root / 'workspace'
             workspace.mkdir(exist_ok=True)
             run(['mount', '--bind', ROOT, workspace])
-            mounts.append(workspace)
+            stack.callback(run, ['umount', workspace])
         policy = root / 'usr/sbin/policy-rc.d'
         saved_policy = policy.read_bytes() if policy.exists() else None
         saved_mode = policy.stat().st_mode if policy.exists() else None
@@ -347,8 +344,6 @@ def builder(output, sysroot=None):
             else:
                 policy.write_bytes(saved_policy)
                 policy.chmod(saved_mode)
-            for mount in reversed(mounts):
-                run(['umount', mount])
 
 
 @contextmanager
@@ -505,9 +500,8 @@ def dependencies(root, log, resume=False):
     signed.signed_records(root, 'Sources', ())
     if root != Path('/'):
         align_development_cohorts(root, log)
-    guest(root, ['apt-get', 'install', '-y', '--no-install-recommends', 'build-essential',
-                 'ca-certificates', 'dpkg-dev', 'devscripts', 'equivs', 'ccache', 'patch'],
-          stdout=log, stderr=subprocess.STDOUT)
+    signed.install_apt_dependencies(root, ['install', 'build-essential', 'ca-certificates',
+                                          'dpkg-dev', 'devscripts', 'equivs', 'ccache', 'patch'], log)
 
 
 def add_patches(work, patches, package, version, message):
@@ -642,10 +636,9 @@ def collect(output, source_dir, runtime_names, version=None, built=True):
         fields = dict(line.split(': ', 1) for line in capture(
             ['dpkg-deb', '-f', path, 'Package', 'Version', 'Architecture']).splitlines())
         name = fields['Package']
-        if name not in runtime_names:
+        if name not in runtime_names or (version is not None and fields['Version'] != version):
             continue
-        if (name in packages or fields['Architecture'] not in ('arm64', 'all') or
-                (version and fields['Version'] != version)):
+        if name in packages or fields['Architecture'] not in ('arm64', 'all'):
             raise ValueError('Unexpected package identity: ' + path.name)
         if built:
             proofs = [checksum_rows(row).get(path.name) for changes in source_dir.glob('*.changes')

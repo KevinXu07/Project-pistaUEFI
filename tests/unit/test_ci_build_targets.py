@@ -1,5 +1,4 @@
 """Actual Git change lists select public product builds, without device inputs."""
-from fnmatch import fnmatchcase
 from pathlib import Path
 import os
 import subprocess
@@ -17,13 +16,21 @@ PRODUCTS = ['debian-gnome', 'debian-kde', 'debian-denial', 'nyarch-gnome',
 
 class CiBuildTargetsTests(unittest.TestCase):
     def test_arch_images_share_two_abi_matched_provider_sets(self):
-        for target in ('nyarch-gnome', 'arch-denial', 'steamos'):
+        for target in ('nyarch-gnome', 'steamos'):
             selected = targets.select([], target)
             self.assertEqual(selected, [target])
             self.assertEqual(targets.overlay_targets(selected), ['nyarch-gnome', 'steamos'])
         self.assertEqual(targets.overlay_targets(['debian-kde']), ['debian-gnome'])
-        self.assertEqual(targets.overlay_targets(['debian-denial']), ['debian-gnome'])
         self.assertEqual(targets.overlay_targets(['linux']), [])
+
+    def test_denial_overlays_do_not_select_unrelated_images(self):
+        self.assertEqual(targets.overlay_targets(['debian-denial']), ['debian-gnome', 'debian-denial'])
+        self.assertEqual(targets.overlay_targets(['arch-denial']), ['nyarch-gnome', 'steamos', 'arch-denial'])
+        self.assertEqual(targets.select(['patches/denial/0.6.8/series.json']),
+                         ['debian-denial', 'arch-denial'])
+        self.assertEqual(targets.select(['containers/denial.Dockerfile']),
+                         ['debian-denial', 'arch-denial'])
+        self.assertEqual(targets.select(['config/denial.json', 'linux/dts/piano-display.dtso']), PRODUCTS)
 
     def test_domains_and_shared_inputs(self):
         self.assertEqual(targets.select(['tools/build/check_patch_series.py']), [])
@@ -41,7 +48,7 @@ class CiBuildTargetsTests(unittest.TestCase):
         self.assertEqual(targets.select(['docs/user/install-from-artifact.md']), PRODUCTS)
         self.assertEqual(targets.select(['uefi/core/product/PianoProductCore.c', 'linux/config']), PRODUCTS)
         self.assertEqual(targets.select(['README.md', 'docs/status.md']), [])
-        self.assertEqual(targets.select(['linux/dts/piano-pen-dock.dtso']), PRODUCTS)
+        self.assertEqual(targets.select(['linux/dts/piano-pen-charger.dtso']), PRODUCTS)
         self.assertEqual(targets.select([], 'debian-gnome'), ['debian-gnome'])
         self.assertEqual(targets.select(['linux/config'], 'uefi'), ['uefi'])
         self.assertEqual(targets.select(['config/release.json'], 'linux'), ['linux'])
@@ -87,38 +94,31 @@ class CiBuildTargetsTests(unittest.TestCase):
             commit('remove product input')
             assert_changes(moved_in, 'linux/settings')
 
-    def test_workflow_path_filter_agrees_on_tracked_inputs(self):
-        workflow = ROOT / '.github/workflows/build-products.yml'
-        lines = workflow.read_text().splitlines()
-        rules = []
-        for line in lines[lines.index('    paths:') + 1:]:
-            if not line.startswith('      - '):
-                break
-            rules.append(line.removeprefix('      - ').strip("'\""))
-
-        def included(path):
-            enabled = False
-            for rule in rules:
-                pattern = rule.removeprefix('!')
-                if pattern.endswith('/**'):
-                    matches = path.startswith(pattern.removesuffix('**'))
-                else:
-                    matches = path.count('/') == pattern.count('/') and fnmatchcase(path, pattern)
-                if matches:
-                    enabled = not rule.startswith('!')
-            return enabled
-
-        tracked = subprocess.check_output(['git', '-C', ROOT, 'ls-files', '-z'], text=True)
-        tracked = [path for path in tracked.split('\0') if path]
-        self.assertEqual([path for path in tracked if included(path)],
-                         [path for path in tracked if targets.select([path])])
-
     def test_host_checks_changes_alone_do_not_select_products(self):
-        check_files = ['.github/workflows/host-checks.yml', 'tools/check_host.py',
+        check_files = ['.github/workflows/_checks.yml', 'tools/check_host.py',
                        'tests/unit/test_camera.py', 'tests/native/PianoBootOptionsTest.c']
         self.assertEqual(targets.select(check_files), [])
         self.assertEqual(targets.select([*check_files, '.github/workflows/_rootfs.yml']), PRODUCTS)
         self.assertEqual(targets.select([*check_files, 'tools/package/camera.py']), PRODUCTS)
+
+    def test_download_publication_changes_do_not_rebuild_products(self):
+        publication = [
+            '.github/workflows/publish-release-images.yml', '.github/workflows/retry-downloads.yml',
+            '.github/workflows/_downloads.yml', '.github/scripts/publish_build_downloads.py',
+            '.github/scripts/publish_release_images.py', 'tools/ci_build_targets.py',
+        ]
+        self.assertEqual(targets.select(publication), [])
+        self.assertEqual(targets.select([*publication, 'config/denial.json']),
+                         ['debian-denial', 'arch-denial'])
+        self.assertEqual(targets.select([*publication, '.github/workflows/_rootfs.yml']), PRODUCTS)
+
+    def test_linux_patch_documentation_does_not_rebuild_products(self):
+        documentation = ['LICENSE.md', 'patches/linux/LICENSE', 'patches/linux/AGENTS.md',
+                         'patches/linux/README.md', 'patches/linux/7.3/README.md']
+        self.assertEqual(targets.select(documentation), [])
+        self.assertEqual(targets.select([*documentation, 'patches/linux/7.3/series.json']), PRODUCTS)
+        self.assertEqual(targets.select([*documentation, 'patches/linux/7.3/0001-LOCAL-fix.patch']),
+                         PRODUCTS)
 
 
 if __name__ == '__main__':

@@ -9,8 +9,8 @@
 | 硬件运行时安装 | [`tools/stage_piano_ram_hardware.py`](../../../tools/stage_piano_ram_hardware.py) | 安装相机配置与显式诊断工具，清理旧的按序加载服务 |
 | 按需充电记录 | [`linux/bsp/common/usr/lib/piano/charge-monitor`](../../../linux/bsp/common/usr/lib/piano/charge-monitor) | `piano-charge-monitor.service`，经共用 BSP 安装，preset 默认关闭 |
 | DMA 状态诊断 | [`linux/userspace/piano-ram-hardware-prepare`](../../../linux/userspace/piano-ram-hardware-prepare) | 仅用于显式诊断，不阻止模块自动探测 |
-| 手指帧解码与多点输入 | [`0095-input-nt36532e-matrix.patch`](../../../patches/linux/7.3/0095-input-nt36532e-matrix.patch) | 编入 `nt36532e_ts`，在现有 SPI 中断线程中直接上报标准输入事件 |
-| 内核笔解码与 BLE 融合 | [`0123-input-nt36532e-pen.patch`](../../../patches/linux/7.3/0123-input-nt36532e-pen.patch) | 编入 `nt36532e_ts`；从标准固件目录加载数字校准，由物理 SPI tablet-tool 上报输入 |
+| 手指帧解码与多点输入 | [`0399-LOCAL-input-nt36532e-matrix.patch`](../../../patches/linux/7.3/0399-LOCAL-input-nt36532e-matrix.patch) | 编入 `nt36532e_ts`，在现有 SPI 中断线程中直接上报标准输入事件 |
+| 内核笔解码与 BLE 融合 | [`0432-LOCAL-input-nt36532e-pen.patch`](../../../patches/linux/7.3/0432-LOCAL-input-nt36532e-pen.patch) | 编入 `nt36532e_ts`；从标准固件目录加载数字校准，由物理 SPI tablet-tool 上报输入 |
 | 原始帧诊断 | [`upstream/debian-piano-current/initramfs/touch-view/piano-touch-view.c`](../../../upstream/debian-piano-current/initramfs/touch-view/piano-touch-view.c) | 派生后编译为 `/usr/bin/piano-touch-view`；由开发者手动运行 |
 | 触屏程序的本地观测补丁 | [`tools/patches/piano-touch-view-observability.patch`](../../../tools/patches/piano-touch-view-observability.patch) | `build_piano_runtime_helpers.py` 派生源码，`build_release_helpers.py` 编译 |
 | 相机服务、图像处理与控制接口 | [`linux/bsp/optional/camera/`](../../../linux/bsp/optional/camera/) 与 [`linux/userspace/camera/`](../../../linux/userspace/camera/) | 共用 Makefile 编译服务与客户端，两条运行库构建入口使用同一份源码 |
@@ -38,8 +38,10 @@ uinput。BLE 尚未连接时继续等待；坐标和压感由内核融合，校�
 
 键盘套和触控板共用 Nanosic MCU。驱动通过 `MODULE_FIRMWARE` 声明启动时
 读取的 `nanosic/MCU_Upgrade.bin`，让发行版的 initramfs 生成工具在收录
-驱动时同时收录固件。固件由系统提供，驱动将代码加载到 MCU 的 RAM，不依赖
-桌面启动后重新初始化。
+驱动时同时收录固件。成品及已配置 SunUEFI 软件源的系统可用
+`piano-firmware-keyboard` 安装固件。共用初装 initramfs 从同一固件清单取文件。
+Arch 系成品的 mkinitcpio 配置明确收录键盘模块，以便在没有连平板的构建机上生成 initramfs。
+驱动将代码加载到 MCU 的 RAM，不依赖桌面启动后重新初始化。
 
 Debian sid 使用发行版 UPower，不再重建旧版 daemon。签名源码中的
 `up-enumerator-udev.c` 已枚举 LED 插拔；`up-daemon.c` 更新组合键盘对象，
@@ -88,8 +90,9 @@ Debian 基础镜像从签名 APT 源安装 `piano-device-config`，SteamOS 和 N
 桌面包由 rootfs 构建自动安装，源码与二进制摘要写入发行版 manifest，构建日志
 并入 CI 的 `logs.zip`。单独构建使用 `./build.sh gsd --sysroot <Debian root>`、
 `./build.sh gdm --sysroot <Debian root>` 和
-`./build.sh pipewire --rootfs <发行版 root> --output <build 下的包目录>`；
-这些命令需要 root，输入均为本地构建目录，不访问平板。
+`./build.sh pipewire --rootfs <发行版 root> --output <build 下的包目录>`。
+构建相机插件时用 `--libcamera-packages` 指定同一发行版的 libcamera 包目录，
+Nyarch 和 SteamOS 必须指定。这些命令需要 root，不访问平板。
 
 Debian 从签名 sid 源码重建 PipeWire 的同版包组，保留 Debian 原有拆包和依赖。
 相机没有可列出的控件时，WirePlumber 仍能连接视频节点；修正后的 V4L2 采集则由
@@ -99,13 +102,19 @@ Debian 从签名 sid 源码重建 PipeWire 的同版包组，保留 Debian 原�
 从原先只替换插件的版本升级前，可用 APT 下载现装的整组软件包保留回退副本；
 Debian sid 更新后，官方源可能不再提供对应的旧版服务端和库。
 
-Nyarch 和 SteamOS 仍独立重建 GStreamer 插件和 `pipewire-v4l2-source`，
-使用目标系统同版本的服务端和库，不替换音频组件。补丁处理格式枚举与首选格式、
-运行中 caps、缓冲池锁顺序、借用 MemPtr 的复制，以及录像持有的 V4L2 复制帧；
+Nyarch 和 SteamOS 各自重建完整的 PipeWire 拆包，使用对应发行版的音频依赖，
+并用同一批 libcamera 归档构建相机插件。标准 V4L2 模块由 Arch 的
+`libpipewire` 或 SteamOS 的 `pipewire` 提供，pacman 升级时移除旧
+`pipewire-v4l2-source` 及加载配置。补丁处理格式枚举与首选格式、运行中 caps、
+缓冲池锁顺序、借用 MemPtr 的复制，以及录像持有的 V4L2 复制帧；
 模块选择与缓冲管理见[相机接口](../hardware/camera-controls.md#帧时间戳与错误)。
-`patches/pipewire/<版本>/series.json` 记录来源和补丁摘要，源码完整准备后才进入缓存，构建器
-变化使旧包缓存失效。19 项格式测试串行运行，使用隔离的 GStreamer registry，
+`patches/pipewire/<版本>/series.json` 记录来源和补丁摘要，构建输入变化会使旧包缓存失效。
+19 项格式测试串行运行，使用隔离的 GStreamer registry，
 不扫描系统插件；它们不替代平板上的相机、录屏和屏幕共享验证。
+
+SteamOS 从 `[sunuefi-steamos]` 安装匹配 Valve Abseil 的 `webrtc-audio-processing`。
+它保留原有 AEC3 库和开发接口，使原版 PipeWire 能加载回声消除插件；
+构建检查生成库实际链接的 Abseil 版本。
 
 GDM 在真实 KMS 设备提供显示接口后启动会话。设备树的临时帧缓冲按平台驱动识别，
 不只检查 `ID_PATH` 前缀；纯渲染 GPU 不作为显示就绪的依据。补丁位于

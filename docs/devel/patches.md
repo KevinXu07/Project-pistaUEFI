@@ -30,7 +30,7 @@ python3 build/firmware-workspace/tools/prepare_nv_runtime_guard.py verify
 
 Linux 内核补丁按内核版本分目录维护在 `patches/linux/`，通过 `patches/linux/7.3/series.json` 登记，在 `./build.sh linux` 阶段自动应用。补丁详情见[内核与调度配置](linux/kernel.md)。
 
-平台、显示、输入与无线、媒体和音频的前五个主题包仍是组合下游移植，没有拆成可逐项提交的子系统系列。清单逐个记录替换它们所需的硬件能力与检查，这些包不是已被主线接收或可直接提交的系列。
+Linux 系列按已合入、邮件列表、外部项目和本地改动维护。板级移植中的驱动和绑定保存各自的来源链接。投稿时，以目标维护树的基线和前置补丁重放。
 
 `original_commit`、`original_parent` 和 `tree` 用于复现本地补丁链；上游状态以各条目的 `upstream` 为准。参考了公开补丁系列的本地改写仍可标为 `downstream`，参考链接不表示这份改写已经提交。来源元数据不替代补丁头的作者、签名和逐文件许可声明，也不补造缺失的签名。
 
@@ -63,7 +63,7 @@ Linux 内核补丁按内核版本分目录维护在 `patches/linux/`，通过 `p
 
 | 系列或构建依赖 | 产品选择 | 删除或保留的依据 |
 | --- | --- | --- |
-| Mesa | 四个产品共用官方 27 开发源码；SteamOS 单独保留高度修正 | 不再依赖外部 `piano-mesa` 仓库、裁剪配方、830v1 芯片 ID 或 D3D12 回移补丁；SteamOS 的 renderonly 分配短缺仍存在 |
+| Mesa | 共用官方 27 开发源码及一份显示缓冲修正 | 上游包含修复后，在平板上确认低分辨率模式可切换，再删除补丁 |
 | GSD、GDM、Mutter | Debian sid 和 Nyarch 的实际 GNOME 51 版本 | 删除旧 GNOME 48／50 专用系列和重复补丁；保留不同产品实际使用的包版本，共享同一修复文件 |
 | UPower | 各发行版原生包 | 已包含键盘背光插拔处理，删除旧 1.90.9 回移和专用构建器，由 GSD 刷新标准背光对象 |
 | FFmpeg、传感器 | sid 原生配方，Arch 系按各自 ABI 构建 | 删除 FFmpeg 7 和 trixie-backports 专用来源；libssc 的向量接口只保留在有消费者的传感器系列中 |

@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "arch": {
+    "upstream_package_version": "1:1.6.11-2",
+    "package_release": "2.5",
+    "v4l2_source_replaces_since": "1:1.6.11-1",
+    "recipe_url": "https://raw.githubusercontent.com/archlinuxarm/PKGBUILDs/6fa5f72fa1cc7cf3b37a61a2bd44d92a9e230db8/extra/pipewire",
+    "files": {
+      "PKGBUILD": "9b6439553a1f0243cfc29858a1c07ce41955a49601de0c401a96c3d19dee8abc",
+      "pipewire.install": "6273955909650638a70fe6592a3f5a11c47a288a8a79d63ec2b312afe077e9de",
+      "pipewire-pulse.install": "96bb31292f93db26c3755e7e9a9f4e7a4a95738c614d45d556bbd788c6a77712",
+      "pipewire-sysusers.conf": "c053d98bbe1a156b72b6f0229efbe6c7aa0edda9ba5bb4e580f27bdaa9a773d9"
+    },
+    "spandsp": {
+      "minimum_version": "3.1.1-1",
+      "soname": "libspandsp.so=4-64"
+    }
+  },
+  "steamos": {
+    "upstream_package_version": "1:1.6.8-5",
+    "package_release": "5.4",
+    "recipe_file": {
+      "name": "PKGBUILD.valve",
+      "origin": "https://holo-packages.steamos.cloud/archlinux-deckard/archlinux/main/sources/packages/pipewire-1%3A1.6.7-1.src.tar.gz",
+      "sha256": "00e51e6d01276c06a0f14e786201298cd515f3f1e7c2caafff462f9499f1e8f1"
+    },
+    "shared_files": ["pipewire.install", "pipewire-pulse.install", "pipewire-sysusers.conf"],
+    "spandsp": {
+      "soname": "libspandsp.so=2-64"
+    },
+    "webrtc_soname": "libwebrtc-audio-processing-2.so=1-64"
+  }
+}

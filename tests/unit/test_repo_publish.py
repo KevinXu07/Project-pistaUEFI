@@ -1,6 +1,8 @@
 """Sign real package indexes, merge releases and reject changed package bytes."""
+from datetime import datetime, timezone
 import hashlib
 import io
+import json
 import os
 from pathlib import Path
 import shutil
@@ -10,7 +12,7 @@ import tarfile
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools/repo'))
@@ -32,6 +34,9 @@ class MemoryStore:
     def __init__(self):
         self.objects = {}
         self.writes = []
+        self.deletions = []
+        self.modified = {}
+        self.timestamp = 1
 
     def get(self, key, path):
         if key not in self.objects:
@@ -43,8 +48,46 @@ class MemoryStore:
         data = path.read_bytes()
         if immutable and key in self.objects and self.objects[key] != data:
             raise ValueError('Published filename has different bytes: ' + key)
-        self.objects[key] = data
+        if key not in self.objects or not immutable:
+            self.objects[key] = data
+            self.modified[key] = self.timestamp
         self.writes.append((key, immutable))
+
+    def list_objects(self, prefix):
+        return [(key, self.modified.get(key, 1)) for key in self.objects if key.startswith(prefix)]
+
+    def delete(self, keys):
+        for key in sorted(keys):
+            self.deletions.append(key)
+            del self.objects[key]
+
+
+class StoreTests(unittest.TestCase):
+    def setUp(self):
+        self.store = object.__new__(repo.Store)
+        self.store.bucket = 'fixture-repo'
+        self.store.client = Mock()
+
+    def test_lists_every_r2_page_with_object_timestamps(self):
+        paginator = self.store.client.get_paginator.return_value
+        paginator.paginate.return_value = [
+            {'Contents': [{'Key': 'apt/older', 'LastModified': datetime.fromtimestamp(1, timezone.utc)}]},
+            {},
+            {'Contents': [{'Key': 'apt/newer', 'LastModified': datetime.fromtimestamp(2, timezone.utc)}]},
+        ]
+        self.assertEqual(list(self.store.list_objects('apt/')), [('apt/older', 1), ('apt/newer', 2)])
+        self.store.client.get_paginator.assert_called_once_with('list_objects_v2')
+        paginator.paginate.assert_called_once_with(Bucket='fixture-repo', Prefix='apt/')
+
+    def test_batches_r2_deletes_and_reports_object_errors(self):
+        delete = self.store.client.delete_objects
+        delete.side_effect = [{}, {'Errors': [{'Key': 'object-1000', 'Code': 'AccessDenied'}]}]
+        with self.assertRaisesRegex(ValueError, 'object-1000: AccessDenied'):
+            self.store.delete(f'object-{i:04}' for i in range(1001))
+        requests = [call.kwargs for call in delete.call_args_list]
+        self.assertEqual([len(request['Delete']['Objects']) for request in requests], [1000, 1])
+        self.assertEqual(requests[1]['Delete']['Objects'], [{'Key': 'object-1000'}])
+        self.assertTrue(all(request['Bucket'] == 'fixture-repo' for request in requests))
 
 
 @unittest.skipUnless(shutil.which('gpg') and shutil.which('gpgv'), 'GnuPG required')
@@ -81,24 +124,29 @@ class RepoPublishTests(unittest.TestCase):
         return SimpleNamespace(repo=name, packages=packages, key=self.key,
                                output=self.root / generation)
 
-    def debian(self, version, name='fixture'):
-        tree = self.root / ('package-' + version)
+    def debian(self, version, name='fixture', *, depends=None):
+        tree = self.root / f'package-{name}-{version}'
         control = tree / 'DEBIAN/control'
         control.parent.mkdir(parents=True)
         control.write_text(f'Package: {name}\nVersion: {version}\nArchitecture: all\n'
-                           'Maintainer: Fixture <test@example.invalid>\nDescription: Fixture\n')
+                           'Maintainer: Fixture <test@example.invalid>\nDescription: Fixture\n' +
+                           (f'Depends: {depends}\n' if depends else ''))
         package = self.root / (name + '_' + version + '_all.deb')
         subprocess.run(['dpkg-deb', '--build', '--root-owner-group', tree, package],
                        check=True, capture_output=True)
         return package
 
-    def pacman(self, version, name='fixture'):
+    def pacman(self, version, name='fixture', *, replaces=(), conflicts=(), depends=()):
         path = self.root / (name + '-' + version + '-1-any.pkg.tar.gz')
         with tarfile.open(path, 'w:gz') as archive:
+            relations = ''.join(f'{field} = {target}\n'
+                                for field, targets in (('replaces', replaces), ('conflict', conflicts),
+                                                       ('depend', depends))
+                                for target in targets)
             data = (f'pkgname = {name}\npkgbase = {name}\npkgver = {version}-1\n'
                     'pkgdesc = Fixture\nurl = https://example.invalid\n'
                     'builddate = 1\npackager = Fixture\nsize = 8\n'
-                    'arch = any\nlicense = MIT\n').encode()
+                    'arch = any\nlicense = MIT\n' + relations).encode()
             info = tarfile.TarInfo('.PKGINFO')
             info.size = len(data)
             archive.addfile(info, io.BytesIO(data))
@@ -107,6 +155,186 @@ class RepoPublishTests(unittest.TestCase):
             info.size = len(data)
             archive.addfile(info, io.BytesIO(data))
         return path
+
+    def publish_run(self, run, batches, *, path=None, tick=None, verify=None):
+        tick = tick if tick is not None else run * 10
+        self.store.timestamp = tick
+        expected = len(self.store.deletions)
+
+        def read_indexes(_, repository, output):
+            self.assertEqual(len(self.store.deletions), expected, 'deleted before the public check')
+            if verify is not None:
+                return verify(repository, output)
+
+        with patch.object(products.time, 'time', return_value=tick), \
+                patch.object(products, 'verify_public', side_effect=read_indexes):
+            products.publish_products(
+                {name: {package: repo.sha(package) for package in archives}
+                 for name, archives in batches.items()},
+                self.key, self.root / (path or f'run-{run}'), self.store,
+                publication_id=str(run))
+
+    def history(self, prefix):
+        return json.loads(self.store.objects[prefix + 'package-history.json'])['publications']
+
+    def snapshot_objects(self, publications):
+        return {key for publication in publications for snapshot in publication['snapshots']
+                for key in snapshot}
+
+    def kernel_cohort(self, format, run):
+        release = f'7.3.3-piano-b{run + 1}-g123456789abc'
+        if format == 'apt':
+            image = 'linux-image-' + release
+            dtb = 'linux-piano-dtb-' + release
+            return [self.debian('1', image), self.debian('1', 'linux-headers-' + release),
+                    self.debian('1', dtb), self.debian(
+                        str(run), 'linux-image-piano', depends=f'{image} (= 1), {dtb} (= 1)')]
+        image = 'linux-piano-' + release
+        dtb = 'linux-piano-dtb-' + release
+        return [self.pacman('1', image), self.pacman('1', image + '-headers'),
+                self.pacman('1', dtb), self.pacman(
+                    str(run), 'linux-piano', depends=(image + '=1-1', dtb + '=1-1'))]
+
+    @unittest.skipUnless(all(shutil.which(name) for name in
+                            ('dpkg-deb', 'dpkg-scanpackages', 'apt-ftparchive')), 'APT tools required')
+    def test_apt_retention_expires_packages_and_their_old_hash_indexes(self):
+        index = 'apt/dists/sid/main/binary-arm64/'
+        pool = 'apt/pool/main/'
+        firmware = self.debian('1', 'piano-firmware', depends='fixture-dependency (= 1)')
+        needed = [firmware, self.debian('1', 'fixture-dependency'),
+                  self.debian('2', 'fixture-dependency')]
+        old = [self.debian('0'), *self.kernel_cohort('apt', 0)]
+        repo.publish(self.args('apt', [*needed, *old], 'before'), self.store)
+        legacy = set(self.store.objects)
+        cohorts = []
+        for run in range(1, 10):
+            cohorts.append([self.debian(str(run)), *self.kernel_cohort('apt', run)])
+            if run == 6:
+                old_index = [key for key in self.history('apt/')[-1]['snapshots'][0]
+                             if '/by-hash/' in key]
+                # Even if storage metadata is newer, the recorded release expires.
+                for package in cohorts[0]:
+                    self.store.modified[pool + package.name] = 65
+            self.publish_run(run, {'apt': cohorts[-1]})
+            if run < 5:
+                self.assertTrue(legacy <= set(self.store.objects))
+                self.assertEqual(self.store.deletions, [])
+            if run in (6, 9):
+                current = self.store.objects[index + 'Packages']
+                for archive in (*old, *(package for cohort in cohorts[:-5] for package in cohort)):
+                    key = pool + archive.name
+                    self.assertNotIn(key, self.store.objects)
+                    self.assertNotIn(archive.name.encode(), current)
+                for archive in (*needed, *(package for cohort in cohorts[-5:] for package in cohort)):
+                    self.assertIn(pool + archive.name, self.store.objects)
+                    self.assertIn(archive.name.encode(), current)
+        history = self.history('apt/')
+        self.assertEqual([row['run'] for row in history], ['5', '6', '7', '8', '9'])
+        self.assertFalse(history[0]['snapshots'])
+        self.assertTrue(self.snapshot_objects(history) <= set(self.store.objects))
+        self.assertTrue(old_index)
+        for key in old_index:
+            self.assertNotIn(key, self.store.objects)
+            self.assertLess(self.store.deletions.index(key),
+                            self.store.deletions.index(pool + cohorts[0][1].name))
+        self.assertIn(index + 'Packages.gz', self.store.objects)
+        self.assertIn('apt/dists/sid/InRelease', self.store.objects)
+
+    @unittest.skipUnless(all(shutil.which(name) for name in ('repo-add', 'repo-remove', 'bsdtar')),
+                         'pacman tools required')
+    def test_pacman_retention_expires_distinct_old_kernel_package_names(self):
+        prefix = 'pacman/sunuefi/os/aarch64/'
+        cohorts = []
+        for run in range(1, 10):
+            cohorts.append(self.kernel_cohort('sunuefi', run))
+            self.publish_run(run, {'sunuefi': cohorts[-1]})
+            if run not in (6, 9):
+                continue
+            current, _ = repo.pacman_metadata(self.root / f'run-{run}/sunuefi/sunuefi.db')
+            files = {filename for _, filename, _ in current.values()}
+            for package in (package for cohort in cohorts[:-5] for package in cohort):
+                self.assertNotIn(prefix + package.name, self.store.objects)
+                self.assertNotIn(prefix + package.name + '.sig', self.store.objects)
+                self.assertNotIn(package.name, files)
+            for package in (package for cohort in cohorts[-5:] for package in cohort):
+                self.assertIn(prefix + package.name, self.store.objects)
+                self.assertIn(prefix + package.name + '.sig', self.store.objects)
+            self.assertEqual(files, {cohort[index].name for cohort in cohorts[-5:]
+                                     for index in range(3)} | {cohorts[-1][-1].name})
+
+    @unittest.skipUnless(all(shutil.which(name) for name in ('repo-add', 'repo-remove', 'bsdtar')),
+                         'pacman tools required')
+    def test_pacman_retention_counts_only_successes_for_each_repository(self):
+        base, valve = 'sunuefi', 'sunuefi-steamos'
+        prefix = f'pacman/{base}/os/aarch64/'
+        valve_prefix = f'pacman/{valve}/os/aarch64/'
+        release = '7.3.3-piano-b10-g123456789abc'
+        kernel_names = [f'linux-piano-{release}', f'linux-piano-{release}-headers',
+                        f'linux-piano-dtb-{release}']
+        kernel = [self.pacman('1', name) for name in kernel_names]
+        meta = self.pacman('1', 'linux-piano', depends=(kernel_names[0] + '=1-1',))
+        firmware = self.pacman('1', 'piano-firmware')
+        old_release = '7.3.3-piano-b1-g123456789abc'
+        old_kernel = self.pacman('1', f'linux-piano-{old_release}')
+        repo.publish(self.args(base, [old_kernel, firmware, meta, *kernel], 'before'), self.store)
+        legacy = set(self.store.objects)
+        unrelated = (f'{prefix}nested/{old_kernel.name}', 'builds/old.pkg.tar.zst',
+                     'releases/v1.0.0/piano.pkg.tar.zst', 'keys/project-archive.gpg')
+        for name in unrelated:
+            self.store.objects[name] = b'unrelated'
+        rp = self.pacman('1', 'valve-fixture')
+        self.publish_run(1, {base: [self.pacman('1')], valve: [rp]})
+        before = self.history(valve_prefix)
+        for run in range(2, 6):
+            self.publish_run(run, {base: [self.pacman(str(run))]})
+            if run < 5:
+                self.assertTrue(legacy <= set(self.store.objects))
+                self.assertEqual(self.store.deletions, [])
+        self.assertEqual(self.history(valve_prefix), before)
+        first = self.history(prefix)[0]
+        self.assertNotIn(prefix + old_kernel.name, self.store.objects)
+        for package in (firmware, *kernel):
+            self.assertIn(prefix + package.name, self.store.objects)
+            self.assertIn(prefix + package.name + '.sig', self.store.objects)
+        self.assertTrue(set(unrelated) <= set(self.store.objects))
+        version6 = self.pacman('6')
+        valve2 = self.pacman('2', 'valve-fixture')
+        batches = {base: [version6], valve: [valve2]}
+        history = self.history(prefix)
+        broken = history[-2]
+        missing, = broken['packages']
+        del self.store.objects[prefix + missing]
+        missing_indexes = {key for key in self.snapshot_objects([broken]) if '/by-hash/' in key}
+
+        def fail(repository, _):
+            if repository == base:
+                raise ValueError('Public index not yet visible')
+
+        with self.assertRaisesRegex(ValueError, 'Public index not yet visible'):
+            self.publish_run(6, batches, path='run-6-interrupted', verify=fail)
+        self.assertEqual(self.history(prefix), history)
+        self.assertEqual(self.history(valve_prefix), before)
+        self.assertTrue(self.snapshot_objects([first]) <= set(self.store.objects))
+
+        self.publish_run(6, batches, tick=61)
+        self.assertEqual([row['run'] for row in self.history(prefix)], ['2', '3', '4', '5', '6'])
+        self.assertEqual([row['run'] for row in self.history(valve_prefix)], ['1', '6'])
+        expired = self.snapshot_objects([first]) - self.snapshot_objects(self.history(prefix))
+        self.assertTrue(expired)
+        self.assertFalse(expired & set(self.store.objects))
+        self.assertTrue(missing_indexes)
+        self.assertFalse(missing_indexes & set(self.store.objects))
+        self.assertFalse(missing_indexes & self.snapshot_objects(self.history(prefix)))
+        self.assertIn(valve_prefix + rp.name + '.sig', self.store.objects)
+        prior = self.history(prefix)[-1]
+        rebuilt = self.pacman('7')
+        self.publish_run(6, {base: [rebuilt]}, path='run-6-retry', tick=62)
+        history = self.history(prefix)
+        self.assertEqual([row['run'] for row in history], ['2', '3', '4', '5', '6'])
+        self.assertEqual(history[-1]['started_at'], prior['started_at'])
+        self.assertTrue(self.snapshot_objects([prior]) <= self.snapshot_objects([history[-1]]))
+        self.assertEqual(set(history[-1]['packages']), {version6.name, rebuilt.name})
+        self.assertTrue(self.snapshot_objects(history) <= set(self.store.objects))
 
     @unittest.skipUnless(shutil.which('repo-add') and shutil.which('bsdtar'), 'pacman tools required')
     def test_pacman_retains_old_packages_and_reuses_signature(self):
@@ -122,6 +350,154 @@ class RepoPublishTests(unittest.TestCase):
                          self.store.objects[prefix + 'sunuefi.db.tar.zst'])
         immutable = [index for index, (_, fixed) in enumerate(self.store.writes) if fixed]
         self.assertLess(immutable[-1], len(self.store.writes) - 1)
+
+    @unittest.skipUnless(all(shutil.which(tool) for tool in ('repo-add', 'repo-remove', 'bsdtar')),
+                         'pacman tools required')
+    def test_pacman_retires_replaced_index_entries_without_removing_archives(self):
+        base, overlay = 'sunuefi', 'sunuefi-steamos'
+        prefix = f'pacman/{base}/os/aarch64/'
+        overlay_prefix = f'pacman/{overlay}/os/aarch64/'
+        plugin = self.pacman('2', 'pipewire-v4l2-source')
+        lib = self.pacman('2', 'libpipewire', replaces=('pipewire-v4l2-source',),
+                          conflicts=('pipewire-v4l2-source',))
+        profiles = self.pacman('1', 'power-profiles-daemon')
+        tuned_ppd = self.pacman('2', 'tuned-ppd', replaces=('power-profiles-daemon',),
+                                conflicts=('power-profiles-daemon',))
+        repo.publish(self.args(base, [plugin, profiles, tuned_ppd], 'before'), self.store)
+        repo.publish(self.args(overlay, [plugin], 'overlay'), self.store)
+        old_index = self.store.objects[prefix + base + '.db']
+        old_signature = self.store.objects[prefix + plugin.name + '.sig']
+        overlay_index = self.store.objects[overlay_prefix + overlay + '.db']
+
+        with patch.object(products, 'verify_public'):
+            products.publish_products({base: {lib: repo.sha(lib)}}, self.key,
+                                      self.root / 'after', self.store)
+            for suffix in ('.db', '.files'):
+                path = self.root / 'after' / base / (base + suffix)
+                entries, _ = repo.pacman_metadata(path)
+                self.assertEqual(set(entries), {'libpipewire', 'power-profiles-daemon', 'tuned-ppd'})
+            before_replay = list(self.store.writes)
+            with self.assertRaisesRegex(ValueError, 'pipewire-v4l2-source .* missing from the index'):
+                products.publish_products({base: {plugin: repo.sha(plugin)}}, self.key,
+                                          self.root / 'replay', self.store)
+            self.assertEqual(self.store.writes, before_replay)
+
+        self.assertEqual(self.store.objects[prefix + plugin.name], plugin.read_bytes())
+        self.assertEqual(self.store.objects[prefix + plugin.name + '.sig'], old_signature)
+        self.assertEqual(self.store.objects[prefix + 'by-hash/SHA256/' +
+                                           hashlib.sha256(old_index).hexdigest()], old_index)
+        self.assertEqual(self.store.objects[overlay_prefix + overlay + '.db'], overlay_index)
+        server = self.pacman('3', 'pipewire', replaces=('pipewire-v4l2-source',),
+                             conflicts=('pipewire-v4l2-source',))
+        scoped_base = self.store.objects[prefix + base + '.db']
+        valve = self.args(overlay, [server], 'valve-native')
+        repo.publish(valve, self.store)
+        for suffix in ('.db', '.files'):
+            entries, _ = repo.pacman_metadata(valve.output / (overlay + suffix))
+            self.assertEqual(set(entries), {'pipewire'})
+        self.assertEqual(self.store.objects[overlay_prefix + plugin.name], plugin.read_bytes())
+        self.assertEqual(self.store.objects[prefix + base + '.db'], scoped_base)
+
+    @unittest.skipUnless(all(shutil.which(tool) for tool in ('repo-add', 'repo-remove', 'bsdtar', 'vercmp')),
+                         'pacman tools required')
+    def test_arch_libfprint_returns_fprintd_to_extra_without_touching_steamos(self):
+        shared, valve = 'sunuefi', 'sunuefi-steamos'
+        prefix = f'pacman/{shared}/os/aarch64/'
+        valve_prefix = f'pacman/{valve}/os/aarch64/'
+        daemon = self.pacman('1.94.5', 'fprintd')
+        lib = self.pacman('1.94.100', 'libfprint')
+        kernel = self.pacman('1', 'linux-piano')
+        repo.publish(self.args(shared, [daemon], 'before'), self.store)
+        repo.publish(self.args(valve, [daemon], 'valve'), self.store)
+        original_db = self.store.objects[prefix + shared + '.db']
+        valve_db = self.store.objects[valve_prefix + valve + '.db']
+        signature = self.store.objects[prefix + daemon.name + '.sig']
+        with patch.object(products, 'verify_public'):
+            products.publish_products({shared: {kernel: repo.sha(kernel)}}, self.key,
+                                      self.root / 'kernel', self.store)
+            selected, _ = repo.pacman_metadata(self.root / 'kernel' / shared / (shared + '.db'))
+            self.assertEqual(set(selected), {'fprintd', 'linux-piano'})
+            products.publish_products({shared: {lib: repo.sha(lib)}}, self.key,
+                                      self.root / 'lib', self.store)
+        for suffix in ('.db', '.files'):
+            selected, _ = repo.pacman_metadata(self.root / 'lib' / shared / (shared + suffix))
+            self.assertEqual(set(selected), {'libfprint', 'linux-piano'})
+        self.assertEqual(self.store.objects[prefix + daemon.name], daemon.read_bytes())
+        self.assertEqual(self.store.objects[prefix + daemon.name + '.sig'], signature)
+        self.assertEqual(self.store.objects[valve_prefix + valve + '.db'], valve_db)
+        self.assertEqual(self.store.objects[prefix + 'by-hash/SHA256/' +
+                                           hashlib.sha256(original_db).hexdigest()], original_db)
+
+    @unittest.skipUnless(all(shutil.which(tool) for tool in ('repo-add', 'repo-remove', 'bsdtar', 'vercmp')),
+                         'pacman tools required')
+    def test_pacman_only_retires_an_entry_matched_by_the_versioned_replacement(self):
+        name = 'pipewire-v4l2-source'
+        valve = self.pacman('1:1.6.8', name)
+        arch = self.pacman('1:1.6.11', name)
+        native = self.pacman('1:1.6.11', 'libpipewire', replaces=(name + '>=1:1.6.11-1',),
+                             conflicts=(name,))
+        repo.publish(self.args('sunuefi', [valve, native], 'before'), self.store)
+        selected, retired = repo.pacman_metadata(self.root / 'before/sunuefi.db')
+        self.assertEqual(selected[name][0], '1:1.6.8-1')
+        self.assertFalse(retired)
+        repo.publish(self.args('sunuefi', [arch], 'after'), self.store)
+        selected, retired = repo.pacman_metadata(self.root / 'after/sunuefi.db')
+        self.assertNotIn(name, selected)
+        self.assertFalse(retired)
+        self.assertIn('pacman/sunuefi/os/aarch64/' + arch.name, self.store.objects)
+
+    @unittest.skipUnless(all(shutil.which(tool) for tool in ('repo-add', 'repo-remove', 'bsdtar', 'vercmp')),
+                         'pacman tools required')
+    def test_shared_v4l2_withdrawal_is_verified_before_the_native_steamos_index(self):
+        base, valve = 'sunuefi', 'sunuefi-steamos'
+        legacy = 'pipewire-v4l2-source'
+        common_prefix = f'pacman/{base}/os/aarch64/'
+        valve_prefix = f'pacman/{valve}/os/aarch64/'
+        old_arch = self.pacman('1:1.6.11', legacy)
+        old_valve = self.pacman('1:1.6.8', legacy)
+        kernel = self.pacman('1', 'linux-piano')
+        repo.publish(self.args(base, [kernel, old_arch], 'old-arch'), self.store)
+        repo.publish(self.args(valve, [old_valve], 'old-valve'), self.store)
+        old_db = self.store.objects[common_prefix + base + '.db']
+        old_steam_db = self.store.objects[valve_prefix + valve + '.db']
+        libpipewire = self.pacman('1:1.6.11', 'libpipewire',
+                                  replaces=(legacy + '>=1:1.6.11-1',), conflicts=(legacy,))
+        pipewire = self.pacman('1:1.6.8', 'pipewire', replaces=(legacy,), conflicts=(legacy,))
+        inputs = {base: {libpipewire: repo.sha(libpipewire)}, valve: {pipewire: repo.sha(pipewire)}}
+        keyring = self.root / 'config/keys/sunuefi-archive-keyring.gpg'
+        checked = []
+        withdrawal_folder = self.root / 'resumed' / 'sunuefi-v4l2-withdrawal'
+
+        def verify_indexes(_, repository, directory):
+            prefix = f'pacman/{repository}/os/aarch64/'
+            database = directory / (repository + '.db')
+            repo.verify(database, directory / (repository + '.db.sig'), keyring)
+            self.assertEqual(self.store.objects[prefix + database.name], database.read_bytes())
+            indexed, _ = repo.pacman_metadata(database)
+            self.assertNotIn(legacy, indexed)
+            checked.append((repository, sorted(indexed)))
+            if list(indexed) == ['linux-piano']:
+                self.assertEqual(self.store.objects[valve_prefix + valve + '.db'], old_steam_db)
+            if repository == valve:
+                self.assertEqual(self.store.objects[common_prefix + base + '.db'],
+                                 (withdrawal_folder / (base + '.db')).read_bytes())
+
+        # The upload has finished but the public domain has not caught up.
+        with patch.object(products, 'verify_public', side_effect=ValueError('withdrawal not visible')):
+            with self.assertRaisesRegex(ValueError, 'withdrawal not visible'):
+                products.publish_products(inputs, self.key, self.root / 'interrupted', self.store)
+        self.assertEqual(self.store.objects[valve_prefix + valve + '.db'], old_steam_db)
+        self.assertNotIn(common_prefix + libpipewire.name, self.store.objects)
+        intermediate = self.store.objects[common_prefix + base + '.db']
+        self.assertEqual(intermediate, (self.root / 'interrupted' / 'sunuefi-v4l2-withdrawal'
+                                        / (base + '.db')).read_bytes())
+        with patch.object(products, 'verify_public', side_effect=verify_indexes):
+            products.publish_products(inputs, self.key, self.root / 'resumed', self.store)
+        self.assertEqual(checked, [(base, ['linux-piano']), (valve, ['pipewire']),
+                                   (base, ['libpipewire', 'linux-piano'])])
+        self.assertEqual(self.store.objects[common_prefix + old_arch.name], old_arch.read_bytes())
+        self.assertEqual(self.store.objects[common_prefix + 'by-hash/SHA256/' +
+                                            hashlib.sha256(old_db).hexdigest()], old_db)
 
     @unittest.skipUnless(shutil.which('repo-add') and shutil.which('bsdtar'), 'pacman tools required')
     def test_product_rejects_older_pacman_version_before_updating_any_index(self):

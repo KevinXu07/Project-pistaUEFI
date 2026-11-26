@@ -12,7 +12,7 @@
 ./build.sh release-rootfs
 ```
 
-`sensors` 默认写入 `build/sensors`，要求源码 HEAD 与固定提交一致、工作区干净，再将源码复制到输出目录的 `upstream/` 并应用 `config/release.json` 列出的补丁。构建器从签名 sid Sources 取得 libssc 和 iio-sensor-proxy，核对 `.dsc` 和所有归档的 SHA-256，经原有 Debian quilt、Meson 和 debhelper 配方生成软件包，不运行上游的 trixie 构建脚本。上游 checkout 保持干净。
+`sensors` 默认写入 `build/sensors`，从干净的固定提交复制设备集成源码。导入器补丁应用于该副本，libssc 和 iio-sensor-proxy 的补丁应用于各自的源包，补丁和哈希统一登记在[传感器补丁清单](../../../patches/piano-sensors/5/series.json)。Debian 构建器从签名 sid Sources 取得源归档，经原有 quilt、Meson 和 debhelper 配方生成 ARM64 软件包；两套 pacman 构建也使用同一份源补丁。
 
 ```sh
 sudo ./build.sh sensors build/sensors --sysroot build/distros/debian-sid/rootfs --jobs 8
@@ -24,35 +24,14 @@ sudo ./build.sh sensors build/sensors --sysroot build/distros/debian-sid/rootfs 
 
 | 包 | 当前固定源码对应的版本 |
 | --- | --- |
-| `piano-sensors` | sid 构建为 `5+sunuefi2`，架构 `all` |
+| `piano-sensors` | sid 构建为 `5+sunuefi3`，架构 `all` |
 | `fastrpc-support`、`libfastrpc1` | sid 标准包 `1.0.9-1`，架构 `arm64` |
-| `libssc2`、`libssc-bin` | `0.4.4-2.1+piano1+sunuefi3`，架构 `arm64` |
-| `iio-sensor-proxy` | `3.9-1+piano1+sunuefi1`，架构 `arm64` |
+| `libssc2`、`libssc-bin` | `0.4.4-2.1+piano1+sunuefi4`，架构 `arm64` |
+| `iio-sensor-proxy` | `3.9-1+piano1+sunuefi2`，架构 `arm64` |
 
-FastRPC 使用签名 sid `contrib` Packages 验证的标准二进制包，不再下载 trixie-backports 包。基础配方同时启用 `main contrib` 的二进制与源码索引。libssc 的属性类型与公开向量接口、iio-sensor-proxy 的启动认领顺序修正仍未包含在上述 sid 源码中，因此保留对应补丁。版本、签名索引及归档哈希、六包集合均记录到输出清单。
+FastRPC 使用签名 sid `contrib` Packages 验证的标准二进制包。基础配方同时启用 `main contrib` 的二进制与源码索引。版本、签名索引、归档哈希以及六包集合均记录到输出清单。
 
-`tools/build_release_rootfs.py --sensors-dir` 默认使用 `build/sensors/runtime`。六个 `.deb` 需直接位于该目录；`SOURCE` 和 `SHA256SUMS` 可一同放在它的父目录或目录内。顶层构建成功后写入的 `SOURCE` 为：
-
-```json
-{
-  "source_url": "https://github.com/blu-sharky/piano-sensors.git",
-  "source_commit": "65a92202db65ad13493b43fbf15d6abb3b7bcf92",
-  "patches": [
-    {
-      "path": "patches/piano-sensors/0001-import-vendor-reg-config.patch",
-      "sha256": "<构建时记录的补丁 SHA-256>"
-    },
-    {
-      "path": "patches/piano-sensors/0002-fix-libssc-property-types.patch",
-      "sha256": "<构建时记录的补丁 SHA-256>"
-    },
-    {
-      "path": "patches/piano-sensors/0003-libssc-raw-vector-reports.patch",
-      "sha256": "<构建时记录的补丁 SHA-256>"
-    }
-  ]
-}
-```
+`tools/build_release_rootfs.py --sensors-dir` 默认使用 `build/sensors/runtime`。六个 `.deb` 需直接位于该目录；`SOURCE` 和 `SHA256SUMS` 可一同放在它的父目录或目录内。
 
 rootfs builder 核对来源字段、补丁清单与补丁哈希、每个 runtime 包的 SHA-256、包名、架构及上述版本，并要求六包齐全。原上游 CI 的 trixie 二进制包不满足 sid 发布输入。校验文件中的路径以它所在目录为基准，解压后需保持 `runtime/` 层级；开发包、调试包、`.changes` 和 `.buildinfo` 留在 `sources/` 供构建核对，不要求随 runtime 分发。
 
@@ -73,15 +52,24 @@ importer 默认读取 `super` 的 primary metadata slot 0，并选择 `odm_a`、
 `system_heap` 暂不作为产品服务依赖。2026-10-08 的冷启动启用该 heap 后，反向 RPC 返回 `0xe`；之前 fastrpc ioctl fallback 能读 JSON。已确认的两条路径差异如下：
 
 * [FastRPC 1.0.7 rpcmem](https://github.com/qualcomm/fastrpc/blob/v1.0.7/src/rpcmem_linux.c) 优先打开 `/dev/dma_heap/system`；只有打开失败才改用 fastrpc 分配 ioctl。前者导入一般页组成的 DMA-BUF，后者来自 compute-cb 的 `dma_alloc_coherent`，受其 DMA mask 约束。
-* 当前 [fastrpc 映射](../../../patches/linux/7.3/0011-fastrpc-drain-ssr-invokes.patch) 只取首段 SG DMA 地址，并用一个连续地址区间传给 DSP。identity/direct domain 下非连续物理 SG 不满足这一表示；translated DMA domain 可由 IOMMU 提供连续 IOVA。
+* 当前 [fastrpc 映射](../../../patches/linux/7.3/0331-LOCAL-fastrpc-adjust-ssr-synchronisation.patch) 只取首段 SG DMA 地址，并用一个连续地址区间传给 DSP。identity/direct domain 下非连续物理 SG 不满足这一表示；translated DMA domain 可由 IOMMU 提供连续 IOVA。
 * listener 最小 buffer 为4 KiB，所以还需核对单段情况。DMA32 的高物理页可能经 SWIOTLB bounce；system_heap 提供 CPU/device 同步回调，但当前 rpcmem/listener 未调用 DMA-BUF CPU 同步接口，fastrpc 也没有相应 SG 同步。未取得失败 buffer 的物理/DMA地址、SG段数和同步状态前，不把 bounce 作为已确认根因。
 * [AEE 错误定义](https://github.com/qualcomm/fastrpc/blob/v1.0.7/inc/AEEStdErr.h) 中 `0xe` 是 `AEE_EBADPARM`、`0x14` 是 `AEE_EUNSUPPORTED`；`mod_table` 日志不能直接解释为内核 `-EFAULT` 或 SMMU fault。
 
-`patches/linux/7.3/0001-platform.patch` 为 SM8750 compute-cb 选择标准 DMA domain，保留其他设备的现有策略；只取消预加载不能覆盖摄像头等其他功能启用 heap 的情况。临时 namespace 只用于早先的一次分配路径对照，没有作为产品方案。
+`patches/linux/7.3/0213-EXTERNAL-iommu-arm-smmu-piano-handoff.patch` 为 SM8750 compute-cb 选择标准 DMA domain，保留其他设备的现有策略；只取消预加载不能覆盖摄像头等其他功能启用 heap 的情况。临时 namespace 只用于早先的一次分配路径对照，没有作为产品方案。
 
 本地 native 包已用 Debian trixie ARM64 sysroot、QEMU 与标准 `dpkg-buildpackage -b -us -uc -aarm64` 构建为 `5+sunuefi1`，保留 socinfo，去掉 system_heap 预加载。`build/sensors-patched/runtime` 复用官方 CI 的另外五包；父目录的 SOURCE、SHA256SUMS 与 BUILD.json 记录源码/补丁/包哈希及构建来源，可作为 `--sensors-dir` 输入。该包构建通过不代表上述 DMA 映射问题已解决。
 
 ## 运行状态
+
+SensorProxy 通过异步 SSC 接口启停测量。收到控制应答并收到配置报告或测量报告，
+libssc 才确认传感器已启动。SensorProxy 再以实际首帧完成 D-Bus 认领。
+启动超时或迟迟没有读数时会结束这一轮待处理的认领，后续可重试；
+失败不会撤销此前已经确认的其他客户端认领。
+
+Debian KDE 安装这组原生包并正常重启后，`monitor-sensor` 两次认领均读到方向和
+环境光。没有客户端取样时，SensorProxy 不再持续占用一个 CPU 核。
+照度、方向、距离和罗盘仍由原有标准接口提供。
 
 2026-10-08，当前a8+CPUCP版本通过普通BOOT启动后，标准SSC客户端已返回
 陀螺仪三轴、罗盘连续读数和光线0lux。陀螺仪在现有libssc中已有实现，CLI帮助

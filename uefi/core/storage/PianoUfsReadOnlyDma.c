@@ -8,7 +8,6 @@
 #include "PianoUfsProductVolume.h"
 #include "PianoStorageIo.h"
 #if defined(PIANO_UFS_PRODUCT_STORAGE) && PIANO_UFS_PRODUCT_STORAGE
-#include "PianoExt4.h"
 #endif
 #ifndef PIANO_UFS_PRODUCT_STORAGE
 #define PIANO_UFS_PRODUCT_STORAGE 0
@@ -652,7 +651,12 @@ STATIC EFI_STATUS FreshWriteGuard(UINT8 Lun,PIANO_UFS_WRITE_GUARD *G) {
   UINT8 *Response=(UINT8 *)mUcd.Cpu+PIANO_UFS_RESPONSE_OFFSET;
   if(!EFI_ERROR(S) && (mTransferred!=32 || Response[2]!=4 || (Response[1]&0x60) || EngineBe32(Response+12)))S=EFI_COMPROMISED_DATA;
   if(!EFI_ERROR(S))S=PianoUfsParseCapacity(mData.Cpu,mTransferred,&Last,&Block);
-  if(!EFI_ERROR(S) && (Block!=4096 || Last!=PIANO_UFS_WRITE_TEST_CAPACITY/4096-1))S=EFI_COMPROMISED_DATA;
+  // The guard must describe the LUN the probe actually reported. A captured
+  // capacity from another unit is not an expectation for this disk.
+  UINT64 ProbeLast=0;UINT32 ProbeBlock=0;
+  for(UINTN I=0;I<mLunCount;++I)if(mLuns[I].Id==Lun){ProbeLast=mLuns[I].Last;ProbeBlock=mLuns[I].Block;break;}
+  // Both the product and diagnostics use 4 KiB blocks and WRITE(10).
+  if(!EFI_ERROR(S) && (Last>MAX_UINT32 || Block!=4096 || Block!=ProbeBlock || Last!=ProbeLast))S=EFI_COMPROMISED_DATA;
   G->CapacityStatus=S;if(EFI_ERROR(S))return S;G->CapacityBytes=(Last+1)*Block;G->Collected|=1;
   S=ReadScsi("WRITE_TEST_FRESH_MODE_SENSE",mServiceTag++,4,PianoUfsModeSense10,0,4096);
   if(!EFI_ERROR(S) && Response[2]!=4)S=EFI_COMPROMISED_DATA;
@@ -1082,11 +1086,8 @@ EFI_STATUS PianoUfsBlockIoShutdownForReset(VOID){
     if(I==7)mProductPublished=FALSE;
 #endif
   }
-  if(mShutdownHandle!=NULL){EFI_GUID Guid=PIANO_UFS_SHUTDOWN_GUID;S=ResetExact(gBS->UninstallMultipleProtocolInterfaces(mShutdownHandle,&Guid,&mShutdown,
-#if PIANO_UFS_PRODUCT_STORAGE
-    &mPartitionIoGuid,&mPartitionIo,
-#endif
-    NULL));if(S!=EFI_SUCCESS){mResetReport.Protocols=S;return ResetFailure(S);}mShutdownHandle=NULL;++mResetReport.ProtocolsRemoved;}
+  if(mShutdownHandle!=NULL){EFI_GUID Guid=PIANO_UFS_SHUTDOWN_GUID;S=ResetExact(gBS->UninstallMultipleProtocolInterfaces(mShutdownHandle,&Guid,&mShutdown,NULL));
+    if(S!=EFI_SUCCESS){mResetReport.Protocols=S;return ResetFailure(S);}mShutdownHandle=NULL;++mResetReport.ProtocolsRemoved;}
   mResetReport.Protocols=EFI_SUCCESS;
   // Cache the final MMIO evidence before releasing the clocks/GDSC. Never
   // probe a potentially unclocked HCI register after this boundary.
@@ -1136,11 +1137,7 @@ VOID PianoUfsBlockIoStop(VOID) {
   }
   if(mShutdownHandle!=NULL) {
     EFI_GUID Guid=PIANO_UFS_SHUTDOWN_GUID;
-    EFI_STATUS Status=gBS->UninstallMultipleProtocolInterfaces(mShutdownHandle,&Guid,&mShutdown,
-#if PIANO_UFS_PRODUCT_STORAGE
-      &mPartitionIoGuid,&mPartitionIo,
-#endif
-      NULL);
+    EFI_STATUS Status=gBS->UninstallMultipleProtocolInterfaces(mShutdownHandle,&Guid,&mShutdown,NULL);
     if(EFI_ERROR(Status)){DmaFaultStop();return;}mShutdownHandle=NULL;
   }
   EFI_STATUS Status=Cleanup();if(EFI_ERROR(Status)){DmaFaultStop();return;}
@@ -1175,11 +1172,7 @@ STATIC EFI_STATUS PublishBlocks(VOID) {
     if(EFI_ERROR(Status) || Signature!=(mGpts[I].Entries!=0))return EFI_DEVICE_ERROR;
   }
   EFI_GUID Guid=PIANO_UFS_SHUTDOWN_GUID;
-  EFI_STATUS Status=gBS->InstallMultipleProtocolInterfaces(&mShutdownHandle,&Guid,&mShutdown,
-#if PIANO_UFS_PRODUCT_STORAGE
-    &mPartitionIoGuid,&mPartitionIo,
-#endif
-    NULL);
+  EFI_STATUS Status=gBS->InstallMultipleProtocolInterfaces(&mShutdownHandle,&Guid,&mShutdown,NULL);
   if(EFI_ERROR(Status))return Status;
   Status=gBS->CreateEventEx(EVT_NOTIFY_SIGNAL,TPL_NOTIFY,PianoUfsExitBoot,NULL,&gEfiEventExitBootServicesGuid,&mExitBootEvent);
   if(EFI_ERROR(Status))return Status;

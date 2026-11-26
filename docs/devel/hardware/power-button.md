@@ -8,7 +8,7 @@ GNOME 使用 `systemd-hostnamed` 报告的设备类型区分平板和虚拟机�
 
 ## 默认设置
 
-[标准 dconf 配置](../../../linux/desktops/gnome/overlay/etc/dconf/db/local.d/00-power)设置 2 分钟空闲熄屏、使用电池时 5 分钟自动挂起、外接电源时 10 分钟自动挂起。键盘背光默认 80%，后续沿用用户保存的亮度。用户可在系统设置里修改这些偏好。
+[标准 dconf 配置](../../../linux/desktops/gnome/overlay/etc/dconf/db/local.d/00-power)设置 2 分钟空闲熄屏、使用电池时 5 分钟自动挂起；外接电源时不自动挂起。Plasma 用自己的 PowerDevil 配置实现相同的空闲行为，插电时合盖关闭显示，短按电源切换显示。键盘背光默认 80%，后续沿用用户保存的亮度。用户可在系统设置里修改这些偏好。
 
 GSD 电源管理器启动时先读取 GNOME 已有的锁屏状态，再配置空闲计时和显示电源。会话已锁屏时保持灭屏；查询失败时保留原显示电源状态，避免重启服务把黑画面背后的背光重新点亮。正常输入仍沿用 GNOME 的唤醒与再次灭屏流程，不增加背光轮询服务。
 
@@ -16,17 +16,17 @@ Debian GNOME 和 KDE 镜像都允许挂起到内存（`mem/deep`）。磁盘休�
 
 ## 内核适配
 
-- 显示 PLL 保存恢复、双 DSI 关闭顺序、DPU 停止顺序和 PHY 运行时时钟由 `patches/linux/7.3/0002-display.patch` 处理。
-- `0029-sm8750-pcie-active-wakeup.patch` 在唤醒链路上保留 PCIe 电源域，避免恢复后 Wi-Fi 的 PCI 配置不可读。
-- `0030-soc-qcom-smp2p-sleepstate.patch` 向原厂固件通知 AP 睡眠状态；它不能单独解决全部 ADSP 恢复问题。
-- `0032-asoc-q6apm-clear-global-on-remove.patch` 修正 ADSP 重启时的全局对象生命周期。
-- `0033-fastrpc-freeze-inflight-invoke.patch` 处理睡眠时等待中的 FastRPC 调用。
+- 显示 PLL 保存恢复、双 DSI 关闭顺序和 PHY 运行时时钟由 `patches/linux/7.3/0224-EXTERNAL-drm-msm-dsi-bonded-piano.patch` 处理。DPU 停止顺序由 `patches/linux/7.3/0229-EXTERNAL-drm-msm-dpu-video-stop-order.patch` 处理。
+- [PCIe 唤醒补丁](../../../patches/linux/7.3/0352-LOCAL-pcie-qcom-keep-retained-links-awake.patch)在唤醒链路上保留 PCIe 电源域，避免恢复后 Wi-Fi 的 PCI 配置不可读。
+- [SMP2P 睡眠通知](../../../patches/linux/7.3/0311-LOCAL-qcom-smp2p-sleepstate.patch)向原厂固件通知 AP 睡眠状态；它不能单独解决全部 ADSP 恢复问题。
+- Q6APM 修正 ADSP 重启时的全局对象生命周期。
+- FastRPC 处理睡眠时仍在等待的调用。
 
 设备已完成 RTC 和电源键唤醒。内核在当前充电保护无法跨挂起持续监测时会拒绝挂起。核对完整链路时先拔下充电线，分别测试电源键和合盖进入挂起、开盖或按键唤醒、恢复后锁屏。调试睡眠时以同一启动 ID、恢复错误和触控／网络状态判断结果。
 
 ## 从旧镜像升级
 
-安装或更新 `piano-device-config` 会清理旧镜像生成且未修改的助手和配置，保留用户编辑过或由其他包管理的文件。原有空闲时间和锁屏默认值不变。升级后重启，让系统重新读取 udev、logind 和 GNOME 配置。新装镜像不再包含旧助手。
+安装或更新 `piano-device-config` 会清理旧镜像生成且未修改的助手和配置，并更新未修改的 GNOME 电源默认值，保留用户编辑过或由其他包管理的文件。升级后重启，让系统重新读取 udev、logind 和 GNOME 配置。新装镜像不再包含旧助手。
 
 旧 Debian 镜像可能还屏蔽了普通挂起。用 `systemctl is-enabled sleep.target suspend.target` 查询；如果显示 `masked`，并确认是镜像的默认设置，不是自己禁用的，解除这两项：
 
