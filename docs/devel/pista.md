@@ -156,7 +156,7 @@ Realme 的 ABL 执行 `fastboot boot` 时，交给后续阶段的 ramdisk 是手
 
 pista 的 apps_smmu 有 132 组流匹配寄存器，piano 有不超过 128 组。内核接管 UEFI 留下的 SMMU 状态时，快照最多只放 128 组，pista 上 SMMU 驱动因此加载失败（`-95`），USB 控制器无法做 DMA。快照上限已改为 256，即 ID0.NUMSMRG 能表示的全部范围。
 
-Linux 现在只看到约 368 MB 内存：UEFI 交给内核的内存图只有它自己用的几块区域（`DXE_Heap` 等），手机其余的内存还没有报给内核。
+从原厂配置生成的内存图只描述 UEFI 自己用到的区域，只靠它的话 Linux 只能看到约 368 MB。所以诊断启动管理库在启动 Linux 之前，会读取 ABL 交给固件的设备树里的 `/memory` 节点，把其中内存图完全没有描述的部分作为可用内存加入 UEFI 内存图（`PistaDdrMemory.c`）。ABL 每次启动都按 DDR 分区表填写这个节点，所以内存容量跟着机器走，不写死在内存图里；目前只在 12 GB 机型上测过。内存图里已有的区域保持原来的类型，`Kernel` 区域（256 MB）继续保留给 ABL 放内核和 ramdisk；需要避开的固件区域由内核设备树里的 reserved-memory 节点保留。在 12 GB 的机器上，固件加入 10550 MiB，Linux 的 `MemTotal` 是 10.2 GiB。写满 9.3 GB 再读回校验没有出错，加入的内存都能正常读写。
 
 ## 原厂模块的加载顺序
 

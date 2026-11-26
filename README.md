@@ -17,7 +17,7 @@
 | TrustZone 相关驱动 | ❌ | 临时启动时初始化失败，诊断固件暂不携带；原厂的存储、变量保存和显示驱动需要它们，SunUEFI 自己的 USB 和存储驱动不需要 |
 | UEFI Fastboot | ✅ | USB 2.0，可导出固件日志、截图、查询状态、重启 |
 | 内部存储 | ✅ 只读 | 用 SunUEFI 自己的 UFS 驱动，`fastboot fetch` 能按分区名导出，不能写入 |
-| Linux | 🚧 | 主线 7.3.3 内核从内存启动，电脑通过 USB 串口得到 shell；只看到约 368 MB 内存，屏幕沿用固件的帧缓冲，存储、触控、电池、无线都还没适配 |
+| Linux | 🚧 | 主线 7.3.3 内核从内存启动，能使用 ABL 列出的内存（12 GB 机型上 Linux 可用 10.2 GiB），电脑通过 USB 串口得到 shell；屏幕沿用固件的帧缓冲，存储、触控、电池、无线都还没适配 |
 | 开机选择 Android 或 UEFI | ❌ | 需要先摸清 Realme ABL 的行为 |
 | Windows on ARM | ❌ | SunUEFI 在小米平板 8 Pro 上也还没有启动 |
 

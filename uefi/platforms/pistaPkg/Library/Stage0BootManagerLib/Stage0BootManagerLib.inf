@@ -9,6 +9,7 @@
 # into the workspace copy of this library by tools/dev/prepare_pista.py.
 [Sources]
   Stage0BootManagerLib.c
+  PistaDdrMemory.c
   NativeModules.h
   PistaDeviceTree.h
   PianoUsbController.c
@@ -50,6 +51,7 @@
   DxeServicesTableLib
   DxeServicesLib
   FdtLib
+  MemoryMapLib
   PrintLib
   SerialPortLib
   ArmSmcLib
@@ -67,6 +69,6 @@
   gEfiEventExitBootServicesGuid
 [BuildOptions]
   # USB Fastboot over USB 2.0 with read-only UFS: "fetch" reads GPT partitions;
-  # nothing writes to UFS. No RAM boot or USB host.
+  # nothing writes to UFS. No USB host.
   # "oem ramlog" exports the whole UEFI_RamLog ring written by RamLogSerialPortLib.
   GCC:*_CLANGPDB_AARCH64_CC_FLAGS = -DPIANO_USB_SERVICE=1 -DPIANO_USB_EP0=1 -DPIANO_USB_FASTBOOT=1 -DPIANO_USB_SCREENSHOT=1 -DPIANO_USB_UFS_FETCH=1 -DPIANO_UFS_BLOCKIO=1 -DPIANO_USB_SUPERSPEED=0 -DSUNUEFI_DEVICE_NAME=\"pista\" -DPIANO_USB_CONSOLE_BASE=0xD7E00000U -DPIANO_USB_DIAG_LOG_BYTES=0x200000U

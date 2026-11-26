@@ -29,6 +29,7 @@ EFI_STATUS PianoUfsReadOnlyDmaExperiment (CONST VOID *Fdt);
 CONST CHAR8 *PianoUfsStartupStage (VOID);
 EFI_STATUS PianoStartFaultRecovery (VOID);
 VOID PistaRamLogSetScreenCopy (BOOLEAN Enabled);
+UINT64 PistaAddDdrFromAbl (VOID);
 
 STATIC EFI_EVENT mReturnToAndroidEvent;
 
@@ -325,7 +326,6 @@ EFI_DEVICE_PATH_PROTOCOL **EFIAPI DeviceBootManagerAfterConsole (VOID)
   Status = gBS->LocateProtocol (&gEfiGraphicsOutputProtocolGuid, NULL, (VOID **)&Gop);
   Print (L"\r\nSunUEFI: Realme GT7 Pro / rmx5010 / SM8750-AB\r\n");
   Print (L"Stage 0 diagnostic: DXE and console reached, EL%u\r\n", (UINT32)(CurrentEl >> 2));
-  Print (L"Linux and Windows PE boot are not implemented in this image.\r\n");
   if (!EFI_ERROR (Status) && Gop != NULL && Gop->Mode != NULL && Gop->Mode->Info != NULL) {
     Print (L"GOP %ux%u, stride %u, framebuffer 0x%lx\r\n",
       Gop->Mode->Info->HorizontalResolution, Gop->Mode->Info->VerticalResolution,
@@ -337,6 +337,7 @@ EFI_DEVICE_PATH_PROTOCOL **EFIAPI DeviceBootManagerAfterConsole (VOID)
   // the detailed UFS, USB and SMMU traces go to "fastboot oem ramlog".
   Print (L"Detailed log: \"fastboot oem ramlog\".\r\n");
   PistaRamLogSetScreenCopy (FALSE);
+  Print (L"RAM: added %lu MiB listed by the boot loader\r\n", PistaAddDdrFromAbl () >> 20);
   // Before Fastboot: Linux must start while USB and UFS are still untouched.
   RunLinuxRamBoot ();
   RunFastboot ();
