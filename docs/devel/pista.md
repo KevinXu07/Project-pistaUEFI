@@ -192,12 +192,12 @@ UEFI 变量只存在内存里（`PcdEmuVariableNvModeEnable`），不写 UFS。�
 | 项目 | 做法 |
 | --- | --- |
 | hummer 的板级准备 | 不执行。它给 hummer 的 Wi-Fi 射频供电，把 GPIO53 设为输出、ldob9 设为 3.056 V；在 pista 上 GPIO53 和 L9B（2.504 V）接的是红外发射器。摄像头 DMA、ADSP 和 GPU 的准备跟随 hummer 的 Windows 驱动，也不执行 |
-| 可用内存 | 在 DXE 阶段按 ABL 每次传入的 `/memory` 补充 UEFI 内存图。已有内存区域保留原来的类型，Gunyah 等保留区留给原厂固件使用 |
+| 可用内存 | 在 DXE 阶段按 ABL 每次传入的 `/memory` 补充 UEFI 内存图，再把设备树 `/reserved-memory` 里的区域和 `0x8BA00000` 以下的内存标为保留（`RamManagerDxe`）。Linux 自己按 `/reserved-memory` 避开平台区域，Windows 不读设备树，只能由固件挡掉。`/memory` 还覆盖了不带 no-map 的 QDSS 追踪缓冲区（`0x82800000` 起 32 MiB）和平台区域之间几段共约 6 MiB 的空隙；启动管理器把代码放进这些位置后会卡住且不报异常，全部挡掉后才能启动 Windows 安装程序 |
 | Mass | 不再把 UFS LUN 0 交给电脑，改为交出一块 1.5 GiB 的内存盘。电脑上它显示为 `Qualcomm MMC Storage`；拷入 Windows 安装文件（不含 `install.wim`）、弹出后按音量上键，程序直接以 `RAM` 方式启动 Windows 启动程序，只从这块盘启动 `\EFI\BOOT\BOOTAA64.EFI`。内存盘重启后消失 |
 | USB | 改由 Windows 启动程序以 `USB` 方式从 U 盘启动，原来的通用路径不打 Windows 内核补丁。目前用不了：`fastboot boot` 时 ABL 把 USB 控制器留在设备模式，UsbConfigDxe 不再切换，手机也不给外设供电 |
 | ACPI | UFS 节点对 Windows 隐藏（`_STA` 返回 0），在决定往内部存储装 Windows 之前，Windows 看不到内部存储。其余仍是 hummer 的板级描述 |
 
-GT7 Pro 能从内存盘进入 Windows 启动管理器。选择 Windows Setup 后，启动管理器能读到 `sources/boot.wim` 末尾。Windows 安装界面还没有出现。
+GT7 Pro 能从内存盘启动 Windows 安装程序：在启动管理器里选择 Windows Setup，读完 `sources/boot.wim` 后进入安装界面。内存盘只有 1.5 GiB，放不下 `install.wim`，还不能完成安装。
 
 ## 原厂模块的加载顺序
 

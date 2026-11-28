@@ -19,7 +19,7 @@
 | 内部存储 | ✅ 只读 | 用 SunUEFI 自己的 UFS 驱动，`fastboot fetch` 能按分区名导出，不能写入 |
 | Linux | 🚧 | 主线 7.3.3 内核从内存启动，能使用 ABL 列出的内存（12 GB 机型上 Linux 可用 10.2 GiB），电脑通过 USB 串口得到 shell；屏幕沿用固件的帧缓冲，存储、触控、电池、无线都还没适配 |
 | 开机选择 Android 或 UEFI | ❌ | 需要先摸清 Realme ABL 的行为 |
-| Windows on ARM | 🚧 | 内存盘能启动 Windows 启动管理器，选择 Windows Setup 后能读到 `boot.wim` 末尾。见 [Windows 用固件](docs/devel/pista.md#windows-用固件移植自一加-ace-5-pro) |
+| Windows on ARM | 🚧 | 能从内存盘启动到 Windows 安装界面，还不能完成安装。见 [Windows 用固件](docs/devel/pista.md#windows-用固件移植自一加-ace-5-pro) |
 
 ## 试一试
 

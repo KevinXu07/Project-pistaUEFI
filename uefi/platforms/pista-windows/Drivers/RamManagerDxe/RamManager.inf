@@ -1,5 +1,5 @@
 ##
-#  Adds pista DDR ranges listed by ABL.
+#  Adds pista DDR ranges listed by ABL, without its /reserved-memory regions.
 #  SPDX-License-Identifier: BSD-2-Clause-Patent
 ##
 [Defines]
@@ -25,6 +25,7 @@
   DxeServicesTableLib
   FdtLib
   HobLib
+  MemoryAllocationLib
   MemoryMapLib
   UefiBootServicesTableLib
   UefiDriverEntryPoint
