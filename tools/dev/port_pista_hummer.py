@@ -190,6 +190,41 @@ def replace_once(path, old, new):
     path.write_text(text.replace(old, new))
 
 
+def port_windows_memory(tree):
+    """Keep the gaps in ABL's usable DDR ranges out of the UEFI allocator."""
+    package = tree / 'Platforms/Realme/pistaPkg'
+    ram = package / 'Drivers/RamManagerDxe'
+    shutil.copyfile(ROOT / 'uefi/platforms/pistaPkg/Library/Stage0BootManagerLib/PistaDdrMemory.c',
+                    ram / 'PistaDdrMemory.c')
+    silicium = tree / 'Silicon/Silicium/SiliciumPkg'
+    old_driver = 'SiliciumPkg/Drivers/RamManagerDxe/RamManagerDxe.inf'
+    new_driver = 'pistaPkg/Drivers/RamManagerDxe/RamManager.inf'
+    replace_once(silicium / 'SiliciumPkg.dsc.inc', old_driver, new_driver)
+    replace_once(package / 'pista.fdf', old_driver, new_driver)
+    sec = silicium / 'Sec/Sec.c'
+    replace_once(sec, '#include <Library/FdtLib.h>',
+                 '#include <Guid/FdtHob.h>\n#include <Library/FdtLib.h>')
+    replace_once(sec, '  // Build CPU HOB', '''  if (BootFdt != 0) {
+    BuildGuidDataHob (&gFdtHobGuid, &BootFdt, sizeof (BootFdt));
+  }
+
+  // Build CPU HOB''')
+    replace_once(sec.with_suffix('.inf'), '[Guids]\n', '[Guids]\n  gFdtHobGuid\n')
+
+    # The DXE allocator now uses the ABL device tree before any boot application.
+    boot = package / 'Applications/WindowsBoot/WindowsBoot.c'
+    source = boot.read_text()
+    first = source.index('STATIC EFI_STATUS\nReservePlatformMemory (VOID)')
+    last = source.index('EFI_STATUS\nEFIAPI\nWindowsBootEntry (', first)
+    replace_once(boot, source[first:last], '')
+    replace_once(boot, '  Status = ReservePlatformMemory ();\n  if (EFI_ERROR (Status)) {\n    return Status;\n  }\n', '')
+    for header in ('PiPei.h', 'Guid/Fdt.h', 'Library/FdtLib.h', 'Library/HobLib.h', 'LinuxPayload.h'):
+        replace_once(boot, f'#include <{header}>\n', '')
+    replace_once(boot, 'STATIC EFI_GUID mPayloadGuid = HUMMER_LINUX_PAYLOAD_HOB_GUID;\n', '')
+    for dependency in ('FdtLib', 'HobLib', 'gFdtTableGuid'):
+        replace_once(boot.with_suffix('.inf'), f'  {dependency}\n', '')
+
+
 def port_windows_boot(tree):
     """Make the Windows loader safe on pista and let it boot from USB or RAM."""
     package = tree / 'Platforms/Realme/pistaPkg'
@@ -201,8 +236,6 @@ def port_windows_boot(tree):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(path, target)
     boot = package / 'Applications/WindowsBoot/WindowsBoot.c'
-    # pista's board device tree names its memory node "/memory".
-    replace_once(boot, 'FdtPathOffset (Dtb, "/memory@81960000")', 'FdtPathOffset (Dtb, "/memory")')
     # hummer's board bring-up does not match the pista board: its PCIe0 rails
     # power hummer's Wi-Fi front end, and GPIO53 and ldob9 (set to 3.056 V)
     # drive pista's IR emitter (L9B, 2.504 V). Camera DMA, ADSP and GPU set-up
@@ -287,48 +320,6 @@ IsBootSource (IN EFI_DEVICE_PATH_PROTOCOL *Path, IN BOOT_SOURCE Source)
 ''')
     inf = package / 'Applications/WindowsBoot/WindowsBoot.inf'
     replace_once(inf, '[Protocols]', '[Protocols]\n  gEfiLoadedImageProtocolGuid')
-    # Without a serial port, colour bars at the top of the screen show how
-    # far winload got: green when it exits boot services, then blue once the
-    # kernel patch is installed, or red when winload's code was not found.
-    patch = package / 'Library/WindowsKernelPatchLib/WindowsKernelPatch.c'
-    replace_once(patch, '#include <Library/WindowsKernelPatchLib.h>\n',
-                 '#include <Library/WindowsKernelPatchLib.h>\n#include <Protocol/GraphicsOutput.h>\n')
-    replace_once(patch, 'STATIC UINT64 mMemoryMap[8192];\n', '''STATIC UINT64 mMemoryMap[8192];
-STATIC UINT32 *mFrameBuffer;
-STATIC UINT32 mWidth;
-STATIC UINT32 mStride;
-
-STATIC VOID
-ShowProgress (UINTN Row, UINT32 Colour)
-{
-  if (mFrameBuffer == NULL) {
-    return;
-  }
-  for (UINTN Y = Row * 80; Y < Row * 80 + 60; Y++) {
-    for (UINTN X = 0; X < mWidth; X++) {
-      mFrameBuffer[Y * mStride + X] = Colour;
-    }
-  }
-}
-''')
-    replace_once(patch, '  Status = gBS->GetMemoryMap (&Size, (EFI_MEMORY_DESCRIPTOR *)mMemoryMap,',
-                 '  ShowProgress (0, 0x0000C000);\n  Status = gBS->GetMemoryMap (&Size, (EFI_MEMORY_DESCRIPTOR *)mMemoryMap,')
-    replace_once(patch, '    UninstallWindowsKernelPatch ();\n    return gBS->ExitBootServices (ImageHandle, MapKey);',
-                 '    ShowProgress (1, 0x000000FF);\n    UninstallWindowsKernelPatch ();\n'
-                 '    return gBS->ExitBootServices (ImageHandle, MapKey);')
-    replace_once(patch, '  }\n  return EFI_NOT_FOUND;\n}', '  }\n  ShowProgress (1, 0x00FF0000);\n  return EFI_NOT_FOUND;\n}')
-    replace_once(patch, '''  LocateMemoryAttributeProtocol ();
-  mExitBootServices = gBS->ExitBootServices;''', '''  EFI_GRAPHICS_OUTPUT_PROTOCOL *Graphics;
-
-  if (!EFI_ERROR (gBS->LocateProtocol (&gEfiGraphicsOutputProtocolGuid, NULL, (VOID **)&Graphics))) {
-    mFrameBuffer = (UINT32 *)(UINTN)Graphics->Mode->FrameBufferBase;
-    mWidth = Graphics->Mode->Info->HorizontalResolution;
-    mStride = Graphics->Mode->Info->PixelsPerScanLine;
-  }
-  LocateMemoryAttributeProtocol ();
-  mExitBootServices = gBS->ExitBootServices;''')
-    patch_inf = package / 'Library/WindowsKernelPatchLib/WindowsKernelPatchLib.inf'
-    replace_once(patch_inf, '[Protocols]\n', '[Protocols]\n  gEfiGraphicsOutputProtocolGuid\n')
     # The menu's USB entry starts this loader instead of the generic MS boot
     # policy, which applies no Windows kernel patch on this SoC.
     menu = tree / 'Mu_Basecore/MdeModulePkg/Application/BootMenu/BootMenu.c'
@@ -353,6 +344,7 @@ def main():
     patch_binaries(args.tree)
     port_platform(args.tree)
     port_windows_boot(args.tree)
+    port_windows_memory(args.tree)
     print(f'pista tree ready in {args.tree}')
 
 

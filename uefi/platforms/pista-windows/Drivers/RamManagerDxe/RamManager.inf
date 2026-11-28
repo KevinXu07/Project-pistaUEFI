@@ -1,0 +1,39 @@
+##
+#  Adds pista DDR ranges listed by ABL.
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = RamManagerDxe
+  FILE_GUID = F4C010C0-96F1-4B49-BFDA-E982B807F44E
+  MODULE_TYPE = DXE_DRIVER
+  VERSION_STRING = 1.0
+  ENTRY_POINT = ManageRam
+
+[Sources]
+  RamManager.c
+  PistaDdrMemory.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  SiliciumPkg/SiliciumPkg.dec
+
+[LibraryClasses]
+  BaseLib
+  DebugLib
+  DxeServicesTableLib
+  FdtLib
+  HobLib
+  MemoryMapLib
+  UefiBootServicesTableLib
+  UefiDriverEntryPoint
+
+[Guids]
+  gFdtHobGuid
+
+[Protocols]
+  gEfiCpuArchProtocolGuid
+
+[Depex]
+  gEfiCpuArchProtocolGuid

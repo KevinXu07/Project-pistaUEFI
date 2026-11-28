@@ -192,12 +192,12 @@ UEFI 变量只存在内存里（`PcdEmuVariableNvModeEnable`），不写 UFS。�
 | 项目 | 做法 |
 | --- | --- |
 | hummer 的板级准备 | 不执行。它给 hummer 的 Wi-Fi 射频供电，把 GPIO53 设为输出、ldob9 设为 3.056 V；在 pista 上 GPIO53 和 L9B（2.504 V）接的是红外发射器。摄像头 DMA、ADSP 和 GPU 的准备跟随 hummer 的 Windows 驱动，也不执行 |
-| 内存节点 | pista 的设备树里叫 `/memory`，hummer 找的是 `/memory@81960000` |
+| 可用内存 | 在 DXE 阶段按 ABL 每次传入的 `/memory` 补充 UEFI 内存图。已有内存区域保留原来的类型，Gunyah 等保留区留给原厂固件使用 |
 | Mass | 不再把 UFS LUN 0 交给电脑，改为交出一块 1.5 GiB 的内存盘。电脑上它显示为 `Qualcomm MMC Storage`；拷入 Windows 安装文件（不含 `install.wim`）、弹出后按音量上键，程序直接以 `RAM` 方式启动 Windows 启动程序，只从这块盘启动 `\EFI\BOOT\BOOTAA64.EFI`。内存盘重启后消失 |
 | USB | 改由 Windows 启动程序以 `USB` 方式从 U 盘启动，原来的通用路径不打 Windows 内核补丁。目前用不了：`fastboot boot` 时 ABL 把 USB 控制器留在设备模式，UsbConfigDxe 不再切换，手机也不给外设供电 |
 | ACPI | UFS 节点对 Windows 隐藏（`_STA` 返回 0），在决定往内部存储装 Windows 之前，Windows 看不到内部存储。其余仍是 hummer 的板级描述 |
 
-用内存盘启动 Windows 时，GT7 Pro 显示读盘标记后停住，Windows 菜单没有出现。固件在准备加载 `BOOTAA64.EFI` 时就开始记录读盘位置，右上角的心跳方块由固件定时器更新。进入 `ExitBootServices` 钩子时，屏幕顶部显示绿条。装好内核补丁后显示蓝条，找不到 `winload` 时显示红条。
+GT7 Pro 能从内存盘进入 Windows 启动管理器。选择 Windows Setup 后，启动管理器能读到 `sources/boot.wim` 末尾。Windows 安装界面还没有出现。
 
 ## 原厂模块的加载顺序
 

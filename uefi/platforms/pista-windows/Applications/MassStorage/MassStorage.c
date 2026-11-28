@@ -43,62 +43,6 @@ STATIC RAM_DISK_DEVICE_PATH  mPath = {
 };
 STATIC EFI_GUID              mWindowsBootGuid = HUMMER_GENERAL_BOOT_FILE_GUID;
 
-// Progress shown without a serial port while the Windows boot manager runs:
-// a square at the top right changes colour every half second while the
-// firmware timer still runs, each RAM disk read marks its position on a strip
-// across the screen, and a cursor below it advances with every read.
-STATIC UINT32  *mFrameBuffer;
-STATIC UINT32  mWidth;
-STATIC UINT32  mStride;
-STATIC UINTN   mReads;
-STATIC BOOLEAN mBeat;
-
-STATIC VOID
-Fill (UINTN X, UINTN Y, UINTN Width, UINTN Height, UINT32 Colour)
-{
-  if (mFrameBuffer == NULL) {
-    return;
-  }
-  for (UINTN Row = Y; Row < Y + Height; Row++) {
-    for (UINTN Column = X; Column < X + Width && Column < mWidth; Column++) {
-      mFrameBuffer[Row * mStride + Column] = Colour;
-    }
-  }
-}
-
-STATIC VOID EFIAPI
-HeartBeat (IN EFI_EVENT Event, IN VOID *Context)
-{
-  mBeat = !mBeat;
-  Fill (mWidth - 60, 300, 50, 50, mBeat ? 0x00FFFF00 : 0x00404040);
-}
-
-STATIC VOID
-MarkRead (EFI_LBA Lba)
-{
-  mReads++;
-  Fill ((UINTN)DivU64x64Remainder (MultU64x32 (Lba, mWidth - 4), mMedia.LastBlock + 1, NULL), 400, 4, 40, 0x00FFFFFF);
-  Fill ((mReads * 4) % mWidth, 460, 4, 20, 0x0000FFFF);
-}
-
-STATIC VOID
-StartProgress (VOID)
-{
-  EFI_GRAPHICS_OUTPUT_PROTOCOL *Graphics;
-  EFI_EVENT                    Timer;
-
-  if (EFI_ERROR (gBS->LocateProtocol (&gEfiGraphicsOutputProtocolGuid, NULL, (VOID **)&Graphics))) {
-    return;
-  }
-  mFrameBuffer = (UINT32 *)(UINTN)Graphics->Mode->FrameBufferBase;
-  mWidth       = Graphics->Mode->Info->HorizontalResolution;
-  mStride      = Graphics->Mode->Info->PixelsPerScanLine;
-  mReads       = 0;
-  if (!EFI_ERROR (gBS->CreateEvent (EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, HeartBeat, NULL, &Timer))) {
-    gBS->SetTimer (Timer, TimerPeriodic, EFI_TIMER_PERIOD_MILLISECONDS (500));
-  }
-}
-
 STATIC EFI_STATUS
 CheckRange (UINT32 MediaId, EFI_LBA Lba, UINTN Size, VOID *Buffer)
 {
@@ -127,9 +71,6 @@ RamRead (EFI_BLOCK_IO_PROTOCOL *This, UINT32 MediaId, EFI_LBA Lba, UINTN Size, V
 
   if (!EFI_ERROR (Status)) {
     CopyMem (Buffer, mDisk + MultU64x32 (Lba, RAM_DISK_BLOCK), Size);
-    if (mFrameBuffer != NULL) {
-      MarkRead (Lba);
-    }
   }
   return Status;
 }
@@ -292,7 +233,6 @@ MassStorageEntry (IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
   if (!EFI_ERROR (Status)) {
     ShowStatus (L"Starting Windows from the RAM disk", L"");
     gBS->ConnectController (Disk, NULL, NULL, TRUE);
-    StartProgress ();
     Status = StartWindowsLoader (ImageHandle);
   }
   // Only reached when Windows did not start. Long-press Power to restart.

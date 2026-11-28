@@ -7,7 +7,6 @@
 // from the DDR partition table at every boot, so it also follows the RAM size
 // of the phone. Ranges named in the generated map keep their type there, and
 // only parts that UEFI does not describe at all become conventional memory.
-// Linux still applies the reserved-memory nodes of its own device tree.
 #include <Uefi.h>
 #include <Library/BaseLib.h>
 #include <Library/DebugLib.h>
@@ -122,10 +121,9 @@ STATIC UINT64 ReadCells (CONST UINT32 *Cells, UINT32 Count)
   return Value;
 }
 
-UINT64 PistaAddDdrFromAbl (VOID)
+UINT64 PistaAddDdrFromFdt (CONST VOID *Fdt)
 {
-  CONST volatile UINT64 *Record = (CONST volatile UINT64 *)(UINTN)HANDOFF_RECORD_ADDRESS;
-  CONST VOID            *Fdt;
+  EFI_PHYSICAL_ADDRESS  Address = (UINTN)Fdt;
   CONST UINT32          *Reg;
   INT32                 Node;
   INT32                 Length;
@@ -139,14 +137,13 @@ UINT64 PistaAddDdrFromAbl (VOID)
     DEBUG ((DEBUG_WARN, "PISTA_DDR no CPU protocol %r\n", Status));
     return 0;
   }
-  if ((Record[0] != HANDOFF_RECORD_MAGIC) || !InSystemMemory (Record[1], 40)) {
+  if (!InSystemMemory (Address, 40)) {
     DEBUG ((DEBUG_WARN, "PISTA_DDR no ABL device tree\n"));
     return 0;
   }
-  Fdt = (CONST VOID *)(UINTN)Record[1];
   if ((FdtCheckHeader (Fdt) != 0) || (FdtTotalSize (Fdt) > ABL_FDT_MAX_BYTES) ||
-      !InSystemMemory (Record[1], FdtTotalSize (Fdt))) {
-    DEBUG ((DEBUG_WARN, "PISTA_DDR invalid ABL device tree at 0x%lx\n", Record[1]));
+      !InSystemMemory (Address, FdtTotalSize (Fdt))) {
+    DEBUG ((DEBUG_WARN, "PISTA_DDR invalid ABL device tree at 0x%lx\n", Address));
     return 0;
   }
   AddressCells = FdtAddressCells (Fdt, 0);
@@ -182,4 +179,15 @@ UINT64 PistaAddDdrFromAbl (VOID)
   }
   DEBUG ((DEBUG_WARN, "PISTA_DDR_ADDED %lu MiB\n", mAddedBytes >> 20));
   return mAddedBytes;
+}
+
+UINT64 PistaAddDdrFromAbl (VOID)
+{
+  CONST volatile UINT64 *Record = (CONST volatile UINT64 *)(UINTN)HANDOFF_RECORD_ADDRESS;
+
+  if (Record[0] != HANDOFF_RECORD_MAGIC) {
+    DEBUG ((DEBUG_WARN, "PISTA_DDR no ABL device tree\n"));
+    return 0;
+  }
+  return PistaAddDdrFromFdt ((CONST VOID *)(UINTN)Record[1]);
 }
