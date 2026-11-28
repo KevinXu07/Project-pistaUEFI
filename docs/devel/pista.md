@@ -158,6 +158,35 @@ pista 的 apps_smmu 有 132 组流匹配寄存器，piano 有不超过 128 组�
 
 从原厂配置生成的内存图只描述 UEFI 自己用到的区域，只靠它的话 Linux 只能看到约 368 MB。所以诊断启动管理库在启动 Linux 之前，会读取 ABL 交给固件的设备树里的 `/memory` 节点，把其中内存图完全没有描述的部分作为可用内存加入 UEFI 内存图（`PistaDdrMemory.c`）。ABL 每次启动都按 DDR 分区表填写这个节点，所以内存容量跟着机器走，不写死在内存图里；目前只在 12 GB 机型上测过。内存图里已有的区域保持原来的类型，`Kernel` 区域（256 MB）继续保留给 ABL 放内核和 ramdisk；需要避开的固件区域由内核设备树里的 reserved-memory 节点保留。在 12 GB 的机器上，固件加入 10550 MiB，Linux 的 `MemTotal` 是 10.2 GiB。写满 9.3 GB 再读回校验没有出错，加入的内存都能正常读写。
 
+## Windows 用固件（移植自一加 Ace 5 Pro）
+
+诊断固件只带 19 个原厂模块，不能启动 Windows。启动 Windows 用的是另一份固件：一加 Ace 5 Pro（`hummer`，同为 OPLUS 的 SM8750 机型）的 [uefi_oneplus_ace5_pro](https://github.com/AnyLaySys/uefi_oneplus_ace5_pro)（BSD-2-Clause），移植到 pista。它基于 Mu-Silicium，运行完整的原厂驱动栈（UFS、PMIC、USB、TrustZone 等），带 ACPI 表和 Windows 启动程序。使用的提交记录在 `sources.lock.json` 的 `uefi_oneplus_ace5_pro`。
+
+在 WSL 里准备和编译（源码树放在 Linux 文件系统里，默认 `~/hummer-uefi`，不存在时脚本按固定的提交取下来）：
+
+```bash
+python3 tools/dev/port_pista_hummer.py
+```
+
+```bash
+bash tools/dev/build_pista_hummer.sh DEBUG
+```
+
+第一次编译前，还要用装了 Pillow 的 Python 在源码树里运行一次 `Resources/Scripts/build_font.py`，生成控制台字体。产物是 `artifacts/pista-hummer/pista-DEBUG.img`，用 `fastboot boot` 临时启动后进入启动菜单。音量键移动，电源键确认。这份固件没有 UEFI Fastboot，状态只能看屏幕；卡住时长按电源键回到 Android。
+
+`port_pista_hummer.py` 把 hummer 的源码树改成 pista 的：
+
+| 项目 | 做法 |
+| --- | --- |
+| 原厂驱动和原始文件 | 按 FILE_GUID 换成 pista OTA 的模块，只有 hummer 自己编译的 NtfsDxe 保留。112 个模块里至少 78 个与 hummer 完全相同或只差编译路径 |
+| 驱动补丁 | 按 hummer 的 `patches.json` 修补 8 个驱动，改之前核对原字节。pista 的 PmicDxe 与 pagani 同一构建，用 pagani 的偏移；UFSDxe 追加的代码会跳回原驱动，脚本先确认 pista 的代码段与 hummer 逐字节相同 |
+| 充电驱动 | pista 的 QcomChargerDxeLA 与 hummer、pagani 都不同，补丁位置还没找到，先不带它和 ChargerExDxe |
+| 内存图 | 与 hummer 只差 `DXE_Heap`：按 pista 原厂设为 `0xBE360000`、`0x19CA0000`。hummer 的起点 `0xBD930000` 在 pista 上不是内存 |
+| 配置表 | 41 项与 pista 原厂完全相同，不改 |
+| 机型信息 | SMBIOS 写 Realme GT7 Pro、`pista`、`RMX5010`；附加的设备树换成 pista 的 |
+
+UEFI 变量只存在内存里（`PcdEmuVariableNvModeEnable`），不写 UFS。启动菜单里的 Mass Storage 会把整块内部存储作为可写 U 盘交给电脑，测试时不要选。ACPI 表还是 hummer 的板级描述，Windows 还没有在 pista 上启动过。
+
 ## 原厂模块的加载顺序
 
 16 个原厂基础模块和 3 个 TrustZone 模块必须放进 FDF 的 `APRIORI DXE` 列表，并保持原厂 DXE APRIORI 列表中的相对顺序：

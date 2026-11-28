@@ -78,5 +78,9 @@
   "v4l2loopback": {
     "url": "https://github.com/umlaeute/v4l2loopback.git",
     "commit": "442d720262e150084e7923068fb3c01acc42a253"
+  },
+  "uefi_oneplus_ace5_pro": {
+    "commit": "7a23e9bab781bd6071077e1aa2a94f03c24d4791",
+    "url": "https://github.com/AnyLaySys/uefi_oneplus_ace5_pro.git"
   }
 }
