@@ -65,6 +65,7 @@
   gEfiBlockIoProtocolGuid
   gEfiDevicePathProtocolGuid
   gEfiPartitionInfoProtocolGuid
+  gQcomScmProtocolGuid
 [Guids]
   gEfiEventExitBootServicesGuid
 [BuildOptions]

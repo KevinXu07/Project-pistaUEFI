@@ -23,10 +23,28 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 CAPTURE = ROOT / 'private' / 'pista-capture'
 EXTRACTED = ROOT / 'private' / 'pista-uefi-extracted'
 VENDOR = ROOT / 'vendor' / 'pista'
-# The sixteen Qualcomm foundation drivers the product FV dispatches at runtime.
+# The sixteen Qualcomm foundation drivers and the three TrustZone drivers the
+# diagnostic FV dispatches.
 NATIVE_MODULES = ('SmemDxe', 'DALSys', 'ChipInfo', 'PlatformInfoDxeDriver',
                   'HWIODxeDriver', 'ULogDxe', 'CmdDbDxe', 'PwrUtilsDxe', 'RpmhDxe',
-                  'NpaDxe', 'VcsDxe', 'ClockDxe', 'HALIOMMU', 'DALTLMM', 'Qup', 'I2C')
+                  'NpaDxe', 'VcsDxe', 'ClockDxe', 'HALIOMMU', 'DALTLMM', 'Qup', 'I2C',
+                  'ShmBridgeDxeLA', 'ScmDxeCompat', 'TzDxeLA')
+# Byte patches as (file offset, original, replacement). The pista TzDxeLA is
+# byte-identical to the OnePlus 13 (dodge) one in Mu-Silicium
+# (Binaries/dodge/QcomPkg/Drivers/TzDxe/TzDxeLA.patched.efi), which sets this
+# .data flag so the driver skips its one-time TrustZone setup that ABL has
+# already done before it starts UEFI.
+PE_PATCHES = {'TzDxeLA': ((0xF5B0, b'\x00', b'\x01'),)}
+
+
+def module_pe(module, name):
+    """Return the stock PE of a module with its PE_PATCHES applied."""
+    data = bytearray((module / 'pe32.pe').read_bytes())
+    for offset, original, replacement in PE_PATCHES.get(name, ()):
+        if data[offset:offset + len(original)] != original:
+            raise SystemExit(f'{name}: unexpected bytes at 0x{offset:X}; the stock build changed')
+        data[offset:offset + len(original)] = replacement
+    return bytes(data)
 # Dispatched early via the DXE APRIORI list; validated separately from the sixteen.
 EARLY_MODULE = 'EnvDxeEnhanced'
 # The diagnostic FV carries the early driver and the sixteen foundation drivers.
@@ -261,7 +279,7 @@ def package_vendor(platform):
         target_dir.mkdir(parents=True, exist_ok=True)
         target_pe = target_dir / f'{name}.efi'
         target_depex = target_dir / f'{name}.depex'
-        shutil.copyfile(pe, target_pe)
+        target_pe.write_bytes(module_pe(module, name))
         if depex.exists():
             shutil.copyfile(depex, target_depex)
         if name == EARLY_MODULE:
@@ -425,7 +443,7 @@ def install_workspace(platform):
     for name in STAGE0_MODULES:
         target = workspace / 'Binaries' / 'pista' / 'Stage0' / name
         target.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(index[name] / 'pe32.pe', target / f'{name}.efi')
+        (target / f'{name}.efi').write_bytes(module_pe(index[name], name))
         if (index[name] / 'depex.dxe.depex').exists():
             shutil.copyfile(index[name] / 'depex.dxe.depex', target / f'{name}.depex')
         (target / f'{name}.inf').write_text(

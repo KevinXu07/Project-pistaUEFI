@@ -6,7 +6,7 @@
 
 ## 现状
 
-用 `fastboot boot` 临时启动时，固件会依次完成 BootShim、SEC、DXE 和 BDS 阶段，并接着使用 ABL 已经点亮的屏幕（1264×2780）。piano 产品核心依赖的 16 个原厂基础模块全部能运行，横幅显示 `Stock drivers running: 16/16`。随后固件以只读方式接管内部 UFS，再启动 USB Fastboot 服务，电脑上可以看到 `SunUEFI-pista`。从 `fastboot boot` 到出现这个设备约 8 秒。横幅出现前屏幕滚动启动日志；之后屏幕只显示横幅和每一步的状态（接管存储、启动 USB Fastboot），详细日志只写进内存日志。
+用 `fastboot boot` 临时启动时，固件会依次完成 BootShim、SEC、DXE 和 BDS 阶段，并接着使用 ABL 已经点亮的屏幕（1264×2780）。piano 产品核心依赖的 16 个原厂基础模块和 3 个 TrustZone 模块全部能运行，横幅显示 `Stock drivers running: 19/19` 和 `TrustZone: SCM calls work`。随后固件以只读方式接管内部 UFS，再启动 USB Fastboot 服务，电脑上可以看到 `SunUEFI-pista`。从 `fastboot boot` 到出现这个设备约 8 秒。横幅出现前屏幕滚动启动日志；之后屏幕只显示横幅和每一步的状态（接管存储、启动 USB Fastboot），详细日志只写进内存日志。
 
 Fastboot 服务启动失败时，横幅显示原因，固件在 45 秒后冷重启回 Android。电脑发送 `fastboot continue` 时，固件停止服务，提示 "No Operating System Found!"，10 秒后关机；连着 USB 时手机随后会自动开机回到 Android。
 
@@ -160,9 +160,11 @@ pista 的 apps_smmu 有 132 组流匹配寄存器，piano 有不超过 128 组�
 
 ## 原厂模块的加载顺序
 
-16 个原厂基础模块必须放进 FDF 的 `APRIORI DXE` 列表，并保持原厂 DXE APRIORI 列表中的相对顺序：
+16 个原厂基础模块和 3 个 TrustZone 模块必须放进 FDF 的 `APRIORI DXE` 列表，并保持原厂 DXE APRIORI 列表中的相对顺序：
 
-SmemDxe → DALSys → HWIODxeDriver → ChipInfo → PlatformInfoDxeDriver → HALIOMMU → ULogDxe → CmdDbDxe → PwrUtilsDxe → NpaDxe → RpmhDxe → VcsDxe → ClockDxe → DALTLMM → Qup → I2C
+SmemDxe → DALSys → HWIODxeDriver → ChipInfo → PlatformInfoDxeDriver → HALIOMMU → ULogDxe → CmdDbDxe → PwrUtilsDxe → NpaDxe → RpmhDxe → VcsDxe → ClockDxe → ShmBridgeDxeLA → ScmDxeCompat → DALTLMM → Qup → I2C → TzDxeLA
+
+三个 TrustZone 模块的位置与 Mu-Silicium 里 OnePlus 13（`dodge`）的 APRIORI 相同。pista 的这三个模块与 dodge 的逐字节一致。`fastboot boot` 时 ABL 已经完成了 TrustZone 的初始化，原样的 TzDxeLA 再做一次会断言挂死，所以 `prepare_pista.py` 和 Mu-Silicium 的 `TzDxeLA.patched.efi` 一样，把 `.data` 中偏移 `0xF5B0` 的"已初始化"标志置 1，跳过这次初始化。改之前脚本会核对原字节，原厂构建一变就停下。横幅里的 `TrustZone: SCM calls work` 来自一次真实的 SIP 调用（询问 TrustZone 是否提供特性版本服务），调用失败时那一行会写明原厂存储和显示驱动无法运行。
 
 只靠 DEPEX 排序不行。ULogDxe、CmdDbDxe 和 NpaDxe 的 DEPEX 写的是无条件加载，但运行时需要 DALSys 协议。DXE 第一遍扫描时 DALSys 还在等 SMEM 协议，这些模块会抢先运行，然后在 `DALModEnv.c +115` 断言失败。APRIORI 里的模块严格按列出的顺序加载，不检查 DEPEX，所以顺序一错同样会触发这个断言：piano 模板 `piano.fdf` 就把 ChipInfo 排在了 DALSys 和 SmemDxe 前面。
 
@@ -172,8 +174,8 @@ SmemDxe → DALSys → HWIODxeDriver → ChipInfo → PlatformInfoDxeDriver → 
 
 | 项目 | pista 的情况 | 影响 |
 | --- | --- | --- |
-| TrustZone 相关模块 | `fastboot boot` 起来的固件里，`ScmDxeCompat` 调用 TrustZone 失败（`ScmCall ret=0xE`），`TzDxeLA` 随后断言挂死 | 诊断固件不带 ShmBridgeDxeLA、ScmDxeCompat、TzDxeLA。16 个基础模块都不需要它们；UFSDxe、VariableDxe、DisplayDxe 等模块会用到 |
-| CPU 调频 | ClockDxe 打印 `ClockInitCPU: SCMI LocateProtocol failed` 后继续运行 | SCMI 协议由 QcomScmiDxe 提供，而它排在需要 TrustZone 的 MailboxDxe 之后。没有它时 CPU 保持启动时的频率，UEFI 阶段不受影响 |
+| TrustZone 相关模块 | ABL 在 `fastboot boot` 前已初始化 TrustZone，原样的 `TzDxeLA` 会断言挂死 | 按 Mu-Silicium 对同一模块的修补跳过重复初始化，见[加载顺序](#原厂模块的加载顺序) |
+| CPU 调频 | ClockDxe 打印 `ClockInitCPU: SCMI LocateProtocol failed` 后继续运行 | SCMI 协议由 QcomScmiDxe 提供，诊断固件还没有带它和它依赖的 MailboxDxe。没有它时 CPU 保持启动时的频率，UEFI 阶段不受影响 |
 | 内核格式 | 原厂 `boot.img` 是 v4 头，内核是未压缩的 PE | ABL 同样接受 gzip 压缩的 BootShim 加固件 |
 | USB | 只有 USB 2.0，USB3 PHY 在设备树中禁用 | Fastboot 以 High-Speed 工作，不需要 Type-C 正反面切换 |
 | 看门狗 | 固件挂死在断言里时约 90 秒后整机复位；Fastboot 空闲运行几分钟没有复位 | 挂死时手机会自己重启 |
@@ -186,7 +188,7 @@ SmemDxe → DALSys → HWIODxeDriver → ChipInfo → PlatformInfoDxeDriver → 
 | 路径 | 内容 |
 | --- | --- |
 | `uefi/platforms/pistaPkg/` | 诊断平台。`MemoryMapLib.c`、`ConfigurationMapLib.c`、`native-memory-map.json`、`native-modules.json`、`Stage0BootManagerLib/NativeModules.h` 和 `Stage0BootManagerLib/PistaDeviceTree.h` 由 `prepare_pista.py` 生成 |
-| `vendor/pista/` | 原厂设备树、16 个基础模块和 EnvDxeEnhanced，`manifest.json` 记录来源和哈希 |
+| `vendor/pista/` | 原厂设备树、16 个基础模块、3 个 TrustZone 模块（TzDxeLA 已修补）和 EnvDxeEnhanced，`manifest.json` 记录来源和哈希 |
 | `tools/dev/stage_pista_capture.py` | 把 OTA 分区镜像放进 `private/pista-capture/` |
 | `tools/dev/extract_uefi_fv.py` | 从 `uefi` 分区提取 FV 里的 DXE 模块 |
 | `tools/dev/fdt_parse.py` | 读取设备树的辅助模块 |

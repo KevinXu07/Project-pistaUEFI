@@ -86,6 +86,21 @@
       "pe": "native/I2C.efi",
       "depex": "native/I2C.depex",
       "file_guid": "04de8591-d2b3-4077-bbbe-b12070094eb6"
+    },
+    "ShmBridgeDxeLA": {
+      "pe": "native/ShmBridgeDxeLA.efi",
+      "depex": null,
+      "file_guid": "41ebb6a6-2c19-4c02-841d-848ce004a282"
+    },
+    "ScmDxeCompat": {
+      "pe": "native/ScmDxeCompat.efi",
+      "depex": null,
+      "file_guid": "4b4973ee-401b-4f36-a6a9-533dfccdfc33"
+    },
+    "TzDxeLA": {
+      "pe": "native/TzDxeLA.efi",
+      "depex": null,
+      "file_guid": "cf6dfc66-14ab-4e13-84db-9c02912d1404"
     }
   },
   "board_dtb": {
@@ -249,6 +264,18 @@
     "native/I2C.depex": {
       "bytes": 72,
       "sha256": "95cfa13b1308bf157c24a44e7492c34335e9af953a0056da17fb047bdeb2dd50"
+    },
+    "native/ShmBridgeDxeLA.efi": {
+      "bytes": 36864,
+      "sha256": "d7e6b4d2d20f71e3830f12995f41555fe686d8c7c03f6ebec428ca83798cb8ec"
+    },
+    "native/ScmDxeCompat.efi": {
+      "bytes": 53248,
+      "sha256": "75a1b163d6a0d9bdea480e2bb9c0972a045ab4f882e5b0c02a213e9972f21415"
+    },
+    "native/TzDxeLA.efi": {
+      "bytes": 69632,
+      "sha256": "eeb415698bd4e6774d0b7ae831c35f849e68d132b8fe4cbeeb5850cbc4b55fd6"
     }
   }
 }

@@ -83,5 +83,20 @@
     "guid": "04de8591-d2b3-4077-bbbe-b12070094eb6",
     "pe_sha256": "a497bf34816b28224910cc1a283293f138615944351f56017ccc974aadf3be7d",
     "depex_sha256": "95cfa13b1308bf157c24a44e7492c34335e9af953a0056da17fb047bdeb2dd50"
+  },
+  "ShmBridgeDxeLA": {
+    "guid": "41ebb6a6-2c19-4c02-841d-848ce004a282",
+    "pe_sha256": "d7e6b4d2d20f71e3830f12995f41555fe686d8c7c03f6ebec428ca83798cb8ec",
+    "depex_sha256": null
+  },
+  "ScmDxeCompat": {
+    "guid": "4b4973ee-401b-4f36-a6a9-533dfccdfc33",
+    "pe_sha256": "75a1b163d6a0d9bdea480e2bb9c0972a045ab4f882e5b0c02a213e9972f21415",
+    "depex_sha256": null
+  },
+  "TzDxeLA": {
+    "guid": "cf6dfc66-14ab-4e13-84db-9c02912d1404",
+    "pe_sha256": "d24462dff8a41c00f93894b6fed8d67cac717e3c30c40963683af8b630ff1af2",
+    "depex_sha256": null
   }
 }

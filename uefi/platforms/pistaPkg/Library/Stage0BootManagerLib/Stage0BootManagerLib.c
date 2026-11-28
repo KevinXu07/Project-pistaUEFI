@@ -11,6 +11,8 @@
 #include <Protocol/GraphicsOutput.h>
 #include <Protocol/LoadedImage.h>
 #include <Protocol/FirmwareVolume2.h>
+#include <Protocol/EFIScm.h>
+#include <Protocol/scm_sip_interface.h>
 #include <Library/TimerLib.h>
 #include <Library/BaseMemoryLib.h>
 #include <Library/DxeServicesLib.h>
@@ -55,6 +57,31 @@ STATIC CHAR16 *LoadedImageName (IN EFI_HANDLE Handle)
     return NULL;
   }
   return Name;
+}
+
+// Asks TrustZone, through the stock SCM driver, whether it offers the
+// feature version service. An answer proves that SCM calls reach TrustZone;
+// the stock storage, variable and display drivers depend on such calls.
+STATIC VOID PrintTrustZoneStatus (VOID)
+{
+  QCOM_SCM_PROTOCOL *Scm;
+  UINT64            Parameters[SCM_MAX_NUM_PARAMETERS] = { TZ_INFO_GET_FEATURE_VERSION_ID };
+  UINT64            Results[SCM_MAX_NUM_RESULTS]       = { 0 };
+  EFI_STATUS        Status;
+
+  Status = gBS->LocateProtocol (&gQcomScmProtocolGuid, NULL, (VOID **)&Scm);
+  if (EFI_ERROR (Status)) {
+    Print (L"TrustZone: SCM driver not running (%r)\r\n", Status);
+    return;
+  }
+  Status = Scm->ScmSipSysCall (Scm, TZ_INFO_IS_SVC_AVAILABLE_ID, TZ_INFO_IS_SVC_AVAILABLE_ID_PARAM_ID,
+                               Parameters, Results);
+  DEBUG ((DEBUG_WARN, "PISTA_TZ status=%r result=0x%lx,0x%lx\n", Status, Results[0], Results[1]));
+  if (EFI_ERROR (Status)) {
+    Print (L"TrustZone: call failed (%r); stock storage and display drivers cannot run\r\n", Status);
+    return;
+  }
+  Print (L"TrustZone: SCM calls work\r\n");
 }
 
 // A stock driver counts as running when its image is still loaded: DXE core
@@ -332,6 +359,7 @@ EFI_DEVICE_PATH_PROTOCOL **EFIAPI DeviceBootManagerAfterConsole (VOID)
       Gop->Mode->Info->PixelsPerScanLine, Gop->Mode->FrameBufferBase);
   }
   PrintNativeDriverSummary ();
+  PrintTrustZoneStatus ();
   DEBUG ((DEBUG_WARN, "PISTA_STAGE0_CONSOLE_READY EL%u\n", (UINT32)(CurrentEl >> 2)));
   // From here the screen shows only the banner and the steps printed above;
   // the detailed UFS, USB and SMMU traces go to "fastboot oem ramlog".

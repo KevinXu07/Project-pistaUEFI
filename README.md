@@ -5,7 +5,7 @@
 
 把 [SunUEFI](https://github.com/slwyts/Project-SunUEFI) 的 EDK2 UEFI 移植到 Realme GT7 Pro（代号 `pista`，型号 RMX5010，骁龙 8 至尊版 SM8750-AB）。SunUEFI 已经让小米平板 8 Pro 在保留 Android 的同时启动主线 Linux；这里的目标是让 GT7 Pro 也能做到同样的事，并跟进 SunUEFI 社区在 Windows on ARM 上的进展。
 
-目前完成的是诊断固件：用 `fastboot boot` 临时启动后，UEFI 能在手机上运行到启动管理阶段，沿用 ABL 点亮的屏幕，原厂的 16 个基础驱动全部正常工作，电脑可以通过 UEFI Fastboot 导出固件日志、截图、查询状态、只读导出分区和重启手机。它还能从内存启动主线 Linux 内核，进到一个可以通过 USB 串口操作的最小系统；完整的 Linux 发行版和 Windows 还不能启动。它不会写入手机上的存储。
+目前完成的是诊断固件：用 `fastboot boot` 临时启动后，UEFI 能在手机上运行到启动管理阶段，沿用 ABL 点亮的屏幕，原厂的 16 个基础驱动和 TrustZone 驱动全部正常工作，电脑可以通过 UEFI Fastboot 导出固件日志、截图、查询状态、只读导出分区和重启手机。它还能从内存启动主线 Linux 内核，进到一个可以通过 USB 串口操作的最小系统；完整的 Linux 发行版和 Windows 还不能启动。它不会写入手机上的存储。
 
 ## 现状
 
@@ -14,7 +14,7 @@
 | 原厂输入生成 | ✅ | 内存图、配置表、板级设备树和原厂 DXE 驱动全部从 RMX5010 原厂 OTA 生成 |
 | 诊断固件临时启动 | ✅ | `fastboot boot` 后依次完成 SEC、DXE 和 BDS 阶段，屏幕 1264×2780 |
 | 原厂基础驱动 | ✅ | 16 个基础驱动全部运行 |
-| TrustZone 相关驱动 | ❌ | 临时启动时初始化失败，诊断固件暂不携带；原厂的存储、变量保存和显示驱动需要它们，SunUEFI 自己的 USB 和存储驱动不需要 |
+| TrustZone 相关驱动 | ✅ | 3 个驱动都能运行，固件能向 TrustZone 发起调用；原厂的存储、变量保存和显示驱动都依赖这一点 |
 | UEFI Fastboot | ✅ | USB 2.0，可导出固件日志、截图、查询状态、重启 |
 | 内部存储 | ✅ 只读 | 用 SunUEFI 自己的 UFS 驱动，`fastboot fetch` 能按分区名导出，不能写入 |
 | Linux | 🚧 | 主线 7.3.3 内核从内存启动，能使用 ABL 列出的内存（12 GB 机型上 Linux 可用 10.2 GiB），电脑通过 USB 串口得到 shell；屏幕沿用固件的帧缓冲，存储、触控、电池、无线都还没适配 |
