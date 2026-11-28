@@ -185,7 +185,19 @@ bash tools/dev/build_pista_hummer.sh DEBUG
 | 配置表 | 41 项与 pista 原厂完全相同，不改 |
 | 机型信息 | SMBIOS 写 Realme GT7 Pro、`pista`、`RMX5010`；附加的设备树换成 pista 的 |
 
-UEFI 变量只存在内存里（`PcdEmuVariableNvModeEnable`），不写 UFS。启动菜单有 Internal、Mass、USB、FFU 四项。Mass 会把整块内部存储作为可写 U 盘交给电脑，FFU 用 Windows 的整盘镜像格式刷写内部存储，两项都会改动 Android 所在的存储，测试时不要选。ACPI 表还是 hummer 的板级描述，Windows 还没有在 pista 上启动过。
+UEFI 变量只存在内存里（`PcdEmuVariableNvModeEnable`），不写 UFS。启动菜单有 Internal、Mass、USB、FFU 四项。FFU 用 Windows 的整盘镜像格式刷写内部存储，会改动 Android 所在的存储，不要选。
+
+`port_pista_hummer.py` 还改了 hummer 的 Windows 启动程序和菜单（自己的文件在 `uefi/platforms/pista-windows/`，按包内路径覆盖到生成的 `pistaPkg`）：
+
+| 项目 | 做法 |
+| --- | --- |
+| hummer 的板级准备 | 不执行。它给 hummer 的 Wi-Fi 射频供电，把 GPIO53 设为输出、ldob9 设为 3.056 V；在 pista 上 GPIO53 和 L9B（2.504 V）接的是红外发射器。摄像头 DMA、ADSP 和 GPU 的准备跟随 hummer 的 Windows 驱动，也不执行 |
+| 内存节点 | pista 的设备树里叫 `/memory`，hummer 找的是 `/memory@81960000` |
+| Mass | 不再把 UFS LUN 0 交给电脑，改为交出一块 1.5 GiB 的内存盘。电脑上它显示为 `Qualcomm MMC Storage`；拷入 Windows 安装文件（不含 `install.wim`）、弹出后按音量上键，程序直接以 `RAM` 方式启动 Windows 启动程序，只从这块盘启动 `\EFI\BOOT\BOOTAA64.EFI`。内存盘重启后消失 |
+| USB | 改由 Windows 启动程序以 `USB` 方式从 U 盘启动，原来的通用路径不打 Windows 内核补丁。目前用不了：`fastboot boot` 时 ABL 把 USB 控制器留在设备模式，UsbConfigDxe 不再切换，手机也不给外设供电 |
+| ACPI | UFS 节点对 Windows 隐藏（`_STA` 返回 0），在决定往内部存储装 Windows 之前，Windows 看不到内部存储。其余仍是 hummer 的板级描述 |
+
+用内存盘启动时，Windows 启动管理器能加载并读几次盘，随后停住：不出菜单，也没有走到 ExitBootServices。屏幕顶部的色条在 winload 交接时出现（绿色），装好内核补丁后再出现蓝色，找不到 winload 时出现红色；内存盘程序还在右上角画心跳方块，在屏幕中部标出每次读盘的位置。启动管理器停住后心跳也停了，说明它停在自己的代码里，没有再调用固件服务。
 
 ## 原厂模块的加载顺序
 

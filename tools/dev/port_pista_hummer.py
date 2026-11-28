@@ -22,6 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 EXTRACTED = ROOT / 'private' / 'pista-uefi-extracted'
 BOARD_DTB = ROOT / 'vendor' / 'pista' / 'dtb' / 'pista.dtb'
+OVERLAY = ROOT / 'uefi' / 'platforms' / 'pista-windows'
 PIN = json.loads((ROOT / 'sources.lock.json').read_text())['uefi_oneplus_ace5_pro']
 # Most pista drivers carry the same code as hummer's, so hummer's patch
 # offsets apply. PmicDxe is the pagani build instead (Mu-Silicium
@@ -182,6 +183,166 @@ def port_platform(tree):
     shutil.copyfile(BOARD_DTB, tree / 'Resources/DTBs/pista.dtb')
 
 
+def replace_once(path, old, new):
+    text = path.read_text().replace('\r\n', '\n')
+    if text.count(old) != 1:
+        sys.exit(f'{path.name}: expected one match for {old.splitlines()[0]!r}')
+    path.write_text(text.replace(old, new))
+
+
+def port_windows_boot(tree):
+    """Make the Windows loader safe on pista and let it boot from USB or RAM."""
+    package = tree / 'Platforms/Realme/pistaPkg'
+    # Our own files, laid out like the package: the RAM disk Mass Storage
+    # application replaces hummer's, which lent UFS LUN 0 to the computer.
+    for path in OVERLAY.rglob('*'):
+        if path.is_file():
+            target = package / path.relative_to(OVERLAY)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, target)
+    boot = package / 'Applications/WindowsBoot/WindowsBoot.c'
+    # pista's board device tree names its memory node "/memory".
+    replace_once(boot, 'FdtPathOffset (Dtb, "/memory@81960000")', 'FdtPathOffset (Dtb, "/memory")')
+    # hummer's board bring-up does not match the pista board: its PCIe0 rails
+    # power hummer's Wi-Fi front end, and GPIO53 and ldob9 (set to 3.056 V)
+    # drive pista's IR emitter (L9B, 2.504 V). Camera DMA, ADSP and GPU set-up
+    # follow hummer's Windows drivers. None of it runs on pista.
+    replace_once(boot, '''  Pcie0Initialize ();
+  MmioWrite32 (0x0F135004, 0);
+  MmioWrite32 (0x0F135000, 0x200);
+  {
+    CONST CHAR8 *Names[] = { "ldob1", "ldob9" };
+    CONST UINT32 Voltages[] = { 1800, 3056 };
+    CONST UINT32 Offsets[] = { 0, 8, 4 };
+    for (UINTN Rail = 0; Rail < ARRAY_SIZE (Names); Rail++) {
+      UINT32 Address = CmdDbAddress (Names[Rail]);
+      UINT32 Values[] = { Voltages[Rail], 7, 1 };
+      if (Address != 0) { RpmhWrite (Address, ARRAY_SIZE (Values), Offsets, Values); }
+    }
+  }
+  AdspInitialize (Handles, Count);
+  GpuInitialize ();
+''', '')
+    replace_once(boot, '''      EFI_STATUS CameraStatus = HummerCameraDmaInitialize ();
+      DEBUG ((DEBUG_INFO, "Camera DMA initialization: %r\\n", CameraStatus));
+''', '')
+    # The load option picks where \EFI\BOOT\BOOTAA64.EFI comes from: "USB"
+    # (from the boot menu) for a USB drive, "RAM" (from the Mass Storage
+    # application) for its RAM disk, none for internal storage. Device mode
+    # is started only for internal storage.
+    replace_once(boot, '''  EFI_DEVICE_PATH_PROTOCOL *DevicePath;
+
+  Status = ReservePlatformMemory ();''', '''  EFI_DEVICE_PATH_PROTOCOL *DevicePath;
+  EFI_LOADED_IMAGE_PROTOCOL *Self;
+  BOOT_SOURCE Source;
+
+  Source = BootSourceInternal;
+  if (!EFI_ERROR (gBS->HandleProtocol (ImageHandle, &gEfiLoadedImageProtocolGuid, (VOID **)&Self))) {
+    if (Self->LoadOptionsSize == sizeof ("USB") && CompareMem (Self->LoadOptions, "USB", sizeof ("USB")) == 0) {
+      Source = BootSourceUsb;
+    } else if (Self->LoadOptionsSize == sizeof ("RAM") && CompareMem (Self->LoadOptions, "RAM", sizeof ("RAM")) == 0) {
+      Source = BootSourceRamDisk;
+    }
+  }
+  Status = ReservePlatformMemory ();''')
+    replace_once(boot, '''  Status = gBS->LocateProtocol (&gEfiUsbfnIoProtocolGuid, NULL, (VOID **)&Usb);
+  if (!EFI_ERROR (Status) && Usb != NULL) {''', '''  Status = gBS->LocateProtocol (&gEfiUsbfnIoProtocolGuid, NULL, (VOID **)&Usb);
+  if (Source == BootSourceInternal && !EFI_ERROR (Status) && Usb != NULL) {''')
+    replace_once(boot, 'if (DevicePath == NULL || MsBootPolicyLibIsDevicePathUsb (DevicePath)) {',
+                 'if (DevicePath == NULL || !IsBootSource (DevicePath, Source)) {')
+    replace_once(boot, '#include <Protocol/BlockIo.h>', '''#include <Protocol/BlockIo.h>
+#include <Protocol/LoadedImage.h>
+#include <PistaRamDisk.h>
+
+typedef enum { BootSourceInternal, BootSourceUsb, BootSourceRamDisk } BOOT_SOURCE;
+
+STATIC EFI_GUID mRamDiskGuid = PISTA_RAM_DISK_GUID;
+
+STATIC BOOLEAN
+IsBootSource (IN EFI_DEVICE_PATH_PROTOCOL *Path, IN BOOT_SOURCE Source)
+{
+  BOOLEAN Usb = MsBootPolicyLibIsDevicePathUsb (Path);
+  BOOLEAN RamDisk = FALSE;
+
+  for (EFI_DEVICE_PATH_PROTOCOL *Node = Path; !IsDevicePathEnd (Node); Node = NextDevicePathNode (Node)) {
+    if (DevicePathType (Node) == HARDWARE_DEVICE_PATH && DevicePathSubType (Node) == HW_VENDOR_DP &&
+        DevicePathNodeLength (Node) >= sizeof (VENDOR_DEVICE_PATH) &&
+        CompareGuid (&((VENDOR_DEVICE_PATH *)Node)->Guid, &mRamDiskGuid)) {
+      RamDisk = TRUE;
+    }
+  }
+  switch (Source) {
+    case BootSourceUsb:     return Usb;
+    case BootSourceRamDisk: return RamDisk;
+    default:                return !Usb && !RamDisk;
+  }
+}''')
+    # Keep the loader's own status on screen instead of repainting the screen
+    # saved when the display driver started, which in DEBUG builds is a log.
+    replace_once(boot, '  EFI_PRESERVED_BOOT_LOGO_PROTOCOL *Logo;\n', '')
+    replace_once(boot, '''      if (!EFI_ERROR (gBS->LocateProtocol (&gPreservedBootLogoProtocolGuid, NULL, (VOID **)&Logo))) {
+        Logo->Restore ();
+      }
+''', '''      Print (L"Starting %s\\r\\n", FileName);
+''')
+    inf = package / 'Applications/WindowsBoot/WindowsBoot.inf'
+    replace_once(inf, '[Protocols]', '[Protocols]\n  gEfiLoadedImageProtocolGuid')
+    # Without a serial port, colour bars at the top of the screen show how
+    # far winload got: green when it exits boot services, then blue once the
+    # kernel patch is installed, or red when winload's code was not found.
+    patch = package / 'Library/WindowsKernelPatchLib/WindowsKernelPatch.c'
+    replace_once(patch, '#include <Library/WindowsKernelPatchLib.h>\n',
+                 '#include <Library/WindowsKernelPatchLib.h>\n#include <Protocol/GraphicsOutput.h>\n')
+    replace_once(patch, 'STATIC UINT64 mMemoryMap[8192];\n', '''STATIC UINT64 mMemoryMap[8192];
+STATIC UINT32 *mFrameBuffer;
+STATIC UINT32 mWidth;
+STATIC UINT32 mStride;
+
+STATIC VOID
+ShowProgress (UINTN Row, UINT32 Colour)
+{
+  if (mFrameBuffer == NULL) {
+    return;
+  }
+  for (UINTN Y = Row * 80; Y < Row * 80 + 60; Y++) {
+    for (UINTN X = 0; X < mWidth; X++) {
+      mFrameBuffer[Y * mStride + X] = Colour;
+    }
+  }
+}
+''')
+    replace_once(patch, '  Status = gBS->GetMemoryMap (&Size, (EFI_MEMORY_DESCRIPTOR *)mMemoryMap,',
+                 '  ShowProgress (0, 0x0000C000);\n  Status = gBS->GetMemoryMap (&Size, (EFI_MEMORY_DESCRIPTOR *)mMemoryMap,')
+    replace_once(patch, '    UninstallWindowsKernelPatch ();\n    return gBS->ExitBootServices (ImageHandle, MapKey);',
+                 '    ShowProgress (1, 0x000000FF);\n    UninstallWindowsKernelPatch ();\n'
+                 '    return gBS->ExitBootServices (ImageHandle, MapKey);')
+    replace_once(patch, '  }\n  return EFI_NOT_FOUND;\n}', '  }\n  ShowProgress (1, 0x00FF0000);\n  return EFI_NOT_FOUND;\n}')
+    replace_once(patch, '''  LocateMemoryAttributeProtocol ();
+  mExitBootServices = gBS->ExitBootServices;''', '''  EFI_GRAPHICS_OUTPUT_PROTOCOL *Graphics;
+
+  if (!EFI_ERROR (gBS->LocateProtocol (&gEfiGraphicsOutputProtocolGuid, NULL, (VOID **)&Graphics))) {
+    mFrameBuffer = (UINT32 *)(UINTN)Graphics->Mode->FrameBufferBase;
+    mWidth = Graphics->Mode->Info->HorizontalResolution;
+    mStride = Graphics->Mode->Info->PixelsPerScanLine;
+  }
+  LocateMemoryAttributeProtocol ();
+  mExitBootServices = gBS->ExitBootServices;''')
+    patch_inf = package / 'Library/WindowsKernelPatchLib/WindowsKernelPatchLib.inf'
+    replace_once(patch_inf, '[Protocols]\n', '[Protocols]\n  gEfiGraphicsOutputProtocolGuid\n')
+    # The menu's USB entry starts this loader instead of the generic MS boot
+    # policy, which applies no Windows kernel patch on this SoC.
+    menu = tree / 'Mu_Basecore/MdeModulePkg/Application/BootMenu/BootMenu.c'
+    replace_once(menu, '      &gMsBootPolicyFileGuid, FixedPcdGetPtr (PcdUfpLoaderFile)',
+                 '      mInternalStorageMenu ? &gMsBootPolicyFileGuid : &mGeneralBootGuid, FixedPcdGetPtr (PcdUfpLoaderFile)')
+    # Windows would drive the internal UFS with its inbox storufs driver.
+    # Until installing to internal storage is planned, Windows does not see it.
+    dsdt = package / 'AcpiTables/Dsdt.asl'
+    replace_once(dsdt, '''            Name (_HID, "QCOM24A5")
+            Name (_UID, 0)''', '''            Name (_HID, "QCOM24A5")
+            Name (_UID, 0)
+            Method (_STA, 0, NotSerialized) { Return (Zero) }''')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--tree', type=Path, default=Path.home() / 'hummer-uefi',
@@ -191,6 +352,7 @@ def main():
     copy_binaries(args.tree)
     patch_binaries(args.tree)
     port_platform(args.tree)
+    port_windows_boot(args.tree)
     print(f'pista tree ready in {args.tree}')
 
 
