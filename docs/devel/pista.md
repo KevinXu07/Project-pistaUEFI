@@ -185,7 +185,7 @@ bash tools/dev/build_pista_hummer.sh DEBUG
 | 配置表 | 41 项与 pista 原厂完全相同，不改 |
 | 机型信息 | SMBIOS 写 Realme GT7 Pro、`pista`、`RMX5010`；附加的设备树换成 pista 的 |
 
-UEFI 变量只存在内存里（`PcdEmuVariableNvModeEnable`），不写 UFS。启动菜单里的 Mass Storage 会把整块内部存储作为可写 U 盘交给电脑，测试时不要选。ACPI 表还是 hummer 的板级描述，Windows 还没有在 pista 上启动过。
+UEFI 变量只存在内存里（`PcdEmuVariableNvModeEnable`），不写 UFS。启动菜单有 Internal、Mass、USB、FFU 四项。Mass 会把整块内部存储作为可写 U 盘交给电脑，FFU 用 Windows 的整盘镜像格式刷写内部存储，两项都会改动 Android 所在的存储，测试时不要选。ACPI 表还是 hummer 的板级描述，Windows 还没有在 pista 上启动过。
 
 ## 原厂模块的加载顺序
 
