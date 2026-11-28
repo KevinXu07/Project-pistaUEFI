@@ -197,7 +197,7 @@ UEFI 变量只存在内存里（`PcdEmuVariableNvModeEnable`），不写 UFS。�
 | USB | 改由 Windows 启动程序以 `USB` 方式从 U 盘启动，原来的通用路径不打 Windows 内核补丁。目前用不了：`fastboot boot` 时 ABL 把 USB 控制器留在设备模式，UsbConfigDxe 不再切换，手机也不给外设供电 |
 | ACPI | UFS 节点对 Windows 隐藏（`_STA` 返回 0），在决定往内部存储装 Windows 之前，Windows 看不到内部存储。其余仍是 hummer 的板级描述 |
 
-用内存盘启动时，Windows 启动管理器能加载并读几次盘，随后停住：不出菜单，也没有走到 ExitBootServices。屏幕顶部的色条在 winload 交接时出现（绿色），装好内核补丁后再出现蓝色，找不到 winload 时出现红色；内存盘程序还在右上角画心跳方块，在屏幕中部标出每次读盘的位置。启动管理器停住后心跳也停了，说明它停在自己的代码里，没有再调用固件服务。
+用内存盘启动 Windows 时，GT7 Pro 显示读盘标记后停住，Windows 菜单没有出现。固件在准备加载 `BOOTAA64.EFI` 时就开始记录读盘位置，右上角的心跳方块由固件定时器更新。进入 `ExitBootServices` 钩子时，屏幕顶部显示绿条。装好内核补丁后显示蓝条，找不到 `winload` 时显示红条。
 
 ## 原厂模块的加载顺序
 
